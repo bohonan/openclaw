@@ -2,6 +2,7 @@
 
 export { resolveClosestSize } from "../media-generation/runtime-shared.js";
 export { resolveGeneratedMediaMaxBytes } from "../media/configured-max-bytes.js";
+export { splitMediaFromOutput } from "../media/parse.js";
 export {
   downloadGeneratedVideoAsset,
   readGeneratedVideoAsset,

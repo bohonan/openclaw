@@ -147,9 +147,16 @@ does not present old screenshots as newly attached images. If context limits
 remove an image's original message, its image input is omitted too; the saved
 transcript and attachment remain unchanged.
 
+Final replies can select generated images with Markdown image references to
+their original Codex saved paths or managed media paths. OpenClaw rewrites those
+recorded references for channel delivery and attaches only the selected native
+images, in reference order. Ordinary links, copied paths, and unrecognized image
+references do not select native outputs. Without a recognized selection, the
+reply retains all generated images that have not been delivered.
+
 Sending another attachment does not suppress generated images from the final
-reply. OpenClaw omits a generated image only when it can match confirmed delivery
-of that image to the reply destination. A partial delivery with uncertain
+reply. OpenClaw omits an already delivered image only when it can match confirmed
+delivery of that image to the reply destination. A partial delivery with uncertain
 attachment outcomes can leave a duplicate image rather than lose an unsent one.
 
 ## Turn liveness and timeouts

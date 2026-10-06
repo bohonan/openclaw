@@ -12,6 +12,44 @@ import {
 } from "./tool-media-payloads.js";
 
 describe("mergeAttemptToolMediaPayloads", () => {
+  it.each([
+    { eligible: [], selected: ["/tmp/delivered.png"] },
+    { eligible: ["/tmp/sibling.png"], selected: ["/tmp/delivered.png"] },
+    { eligible: ["/tmp/sibling.png"], selected: [] },
+  ])(
+    "preserves an explicit empty eligible image selection: $eligible / $selected",
+    ({ eligible, selected }) => {
+      expect(
+        mergeAttemptToolMediaPayloads({
+          payloads: [{ text: "Ready. ![final](/tmp/delivered.png)" }],
+          toolMediaUrls: eligible,
+          toolMediaSelectionUrls: selected,
+        }),
+      ).toEqual([{ text: selected.length ? "Ready." : "Ready. ![final](/tmp/delivered.png)" }]);
+    },
+  );
+
+  it("uses explicit mixed image selection order instead of tool inventory order", () => {
+    expect(
+      mergeAttemptToolMediaPayloads({
+        payloads: [
+          {
+            text: "Ready. ![first](/tmp/native1.png) ![sibling](/tmp/sibling.png) ![last](/tmp/native2.png)",
+          },
+        ],
+        toolMediaUrls: [
+          "/tmp/sibling.png",
+          "/tmp/native2.png",
+          "/tmp/native1.png",
+          "/tmp/discarded.png",
+        ],
+        toolMediaSelectionUrls: ["/tmp/native1.png", "/tmp/sibling.png", "/tmp/native2.png"],
+      }),
+    ).toMatchObject([
+      { text: "Ready.", mediaUrls: ["/tmp/native1.png", "/tmp/sibling.png", "/tmp/native2.png"] },
+    ]);
+  });
+
   it("attaches tool media to the first visible reply", () => {
     // Reasoning payloads are not user-visible replies, so media attaches to the
     // first final/visible payload instead.
@@ -362,6 +400,76 @@ describe("mergeAttemptToolMediaPayloads", () => {
 });
 
 describe("pending tool media carry", () => {
+  it("preserves reversed carried native selection through source suppression", () => {
+    const carry = createPendingToolMediaCarry();
+    carry.capture({
+      toolMediaUrls: ["/tmp/first.png", "/tmp/last.png"],
+      hostOwnedToolMediaUrls: ["/tmp/first.png", "/tmp/last.png"],
+    });
+    const output = carry.merge({
+      payloads: [{ text: "Ready." }],
+      toolMediaSelectionUrls: ["/tmp/last.png", "/tmp/first.png"],
+      sourceReplyDeliveryMode: "message_tool_only",
+    });
+    expect(output?.flatMap((payload) => payload.mediaUrls ?? [])).toEqual([
+      "/tmp/last.png",
+      "/tmp/first.png",
+    ]);
+    expect(getReplyPayloadMetadata(output?.[1] ?? {})).toMatchObject({
+      deliverDespiteSourceReplySuppression: true,
+    });
+  });
+
+  it("preserves interleaved carried image order without combining origin trust", () => {
+    const carry = createPendingToolMediaCarry();
+    carry.capture({
+      toolMediaUrls: ["/tmp/carried-first.png", "/tmp/carried-last.png"],
+      toolTrustedLocalMedia: true,
+    });
+    const output =
+      carry.merge({
+        payloads: [{ text: "Ready." }],
+        toolMediaUrls: ["/tmp/current-middle.png"],
+        toolMediaSelectionUrls: [
+          "/tmp/carried-first.png",
+          "/tmp/current-middle.png",
+          "/tmp/carried-last.png",
+        ],
+      }) ?? [];
+    expect(output.flatMap((payload) => payload.mediaUrls ?? [])).toEqual([
+      "/tmp/carried-first.png",
+      "/tmp/current-middle.png",
+      "/tmp/carried-last.png",
+    ]);
+    expect(output.map((payload) => payload.trustedLocalMedia === true)).toEqual([
+      true,
+      false,
+      true,
+    ]);
+    expect(output[0]?.text).toBe("Ready.");
+  });
+
+  it.each([[], ["/tmp/discarded.png"]])(
+    "retains delivered-only selection evidence with eligible media %j",
+    (eligible) => {
+      const carry = createPendingToolMediaCarry();
+      carry.capture({ toolMediaUrls: eligible, toolMediaSelectionUrls: ["/tmp/delivered.png"] });
+      expect(
+        carry.merge({
+          payloads: [{ text: "Ready. ![final](/tmp/delivered.png)" }],
+          toolMediaUrls: ["/tmp/unselected-current.png"],
+        }),
+      ).toEqual([{ text: "Ready." }]);
+      expect(
+        carry.merge({
+          payloads: [{ text: "Updated. ![final](/tmp/current.png)" }],
+          toolMediaUrls: ["/tmp/current.png"],
+          toolMediaSelectionUrls: ["/tmp/current.png"],
+        }),
+      ).toMatchObject([{ text: "Updated.", mediaUrls: ["/tmp/current.png"] }]);
+    },
+  );
+
   it("deduplicates the same artifact across origins without merging their flags", () => {
     const carry = createPendingToolMediaCarry();
     carry.capture({

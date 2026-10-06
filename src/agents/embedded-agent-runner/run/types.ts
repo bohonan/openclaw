@@ -406,6 +406,8 @@ export type EmbeddedRunAttemptResult = {
   messagingToolSourceReplyPayloads?: MessagingToolSourceReplyPayload[];
   heartbeatToolResponse?: HeartbeatToolResponse;
   toolMediaUrls?: string[];
+  /** Explicit ordered final selection; only URLs also in toolMediaUrls are eligible. */
+  toolMediaSelectionUrls?: string[];
   /**
    * Native artifacts produced and owned by the harness, never model-selected
    * dynamic-tool output. Core validates this as a subset of toolMediaUrls.

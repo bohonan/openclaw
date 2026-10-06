@@ -18,6 +18,7 @@ type EmbeddedRunPayload = NonNullable<EmbeddedAgentRunResult["payloads"]>[number
 
 type ToolMediaBatch = {
   toolMediaUrls?: readonly string[];
+  toolMediaSelectionUrls?: readonly string[];
   hostOwnedToolMediaUrls?: readonly string[];
   toolAutoDeliveryMediaUrls?: readonly string[];
   toolAudioAsVoice?: boolean;
@@ -31,6 +32,17 @@ type ToolMediaMergeParams = ToolMediaBatch & {
 
 function selectToolMedia(params: ToolMediaMergeParams) {
   let mediaUrls = normalizeUniqueTrimmedStringList(params.toolMediaUrls);
+  const eligibleUrls = new Set(mediaUrls);
+  const explicitSelection = params.toolMediaSelectionUrls !== undefined;
+  const referenceUrls = normalizeUniqueTrimmedStringList([
+    ...mediaUrls,
+    ...(params.toolMediaSelectionUrls ?? []),
+  ]);
+  if (explicitSelection) {
+    mediaUrls = normalizeUniqueTrimmedStringList(params.toolMediaSelectionUrls).filter((url) =>
+      eligibleUrls.has(url),
+    );
+  }
   const payloads = params.payloads?.length ? [...params.payloads] : [];
   const payloadIndex = payloads.findIndex((payload) => !payload.isReasoning && !payload.isError);
   const visiblePayload = payloads[payloadIndex];
@@ -38,17 +50,35 @@ function selectToolMedia(params: ToolMediaMergeParams) {
     params.sourceReplyDeliveryMode === "message_tool_only" &&
     visiblePayload &&
     getReplyPayloadMetadata(visiblePayload)?.sourceReplyTranscriptMirror;
-  if (visiblePayload?.text && mediaUrls.length > 0 && !isSourceReplyTranscriptMirror) {
-    const selected = splitMediaFromOutput(visiblePayload.text, {
+  const selectionIndexes = explicitSelection
+    ? payloads.flatMap((payload, index) =>
+        !payload.isReasoning &&
+        !payload.isError &&
+        !getReplyPayloadMetadata(payload)?.sourceReplyTranscriptMirror
+          ? [index]
+          : [],
+      )
+    : !isSourceReplyTranscriptMirror && visiblePayload
+      ? [payloadIndex]
+      : [];
+  for (const index of selectionIndexes) {
+    const payload = payloads[index];
+    if (!payload?.text || referenceUrls.length === 0) {
+      continue;
+    }
+    const selected = splitMediaFromOutput(payload.text, {
       extractAudioDirectives: false,
       extractMediaDirectives: false,
-      markdownImageAllowlist: mediaUrls,
+      markdownImageAllowlist: referenceUrls,
     });
     if (selected.mediaUrls?.length) {
-      const selectedMediaUrls = new Set(selected.mediaUrls);
-      mediaUrls = mediaUrls.filter((url) => selectedMediaUrls.has(url));
-      payloads[payloadIndex] = copyReplyPayloadMetadata(visiblePayload, {
-        ...visiblePayload,
+      if (!explicitSelection) {
+        mediaUrls = normalizeUniqueTrimmedStringList(selected.mediaUrls).filter((url) =>
+          eligibleUrls.has(url),
+        );
+      }
+      payloads[index] = copyReplyPayloadMetadata(payload, {
+        ...payload,
         text: selected.text,
       });
     }
@@ -76,18 +106,21 @@ function mergeSelectedToolMedia(
     isSourceReplyTranscriptMirror,
   }: ReturnType<typeof selectToolMedia>,
 ): EmbeddedRunPayload[] | undefined {
-  const mediaUrlSet = new Set(mediaUrls);
   const autoDeliveryMediaUrls = normalizeUniqueTrimmedStringList(params.toolAutoDeliveryMediaUrls);
-  const hostOwnedMediaUrls = normalizeUniqueTrimmedStringList(params.hostOwnedToolMediaUrls).filter(
-    (url) => mediaUrlSet.has(url),
+  const hostOwnedInventory = new Set(
+    normalizeUniqueTrimmedStringList(params.hostOwnedToolMediaUrls),
   );
+  const hostOwnedMediaUrls = mediaUrls.filter((url) => hostOwnedInventory.has(url));
   if (
     mediaUrls.length === 0 &&
     autoDeliveryMediaUrls.length === 0 &&
     !params.toolAudioAsVoice &&
     !params.toolTrustedLocalMedia
   ) {
-    return params.payloads;
+    const unchanged =
+      payloads.length === (params.payloads?.length ?? 0) &&
+      payloads.every((payload, index) => payload === params.payloads?.[index]);
+    return unchanged ? params.payloads : payloads;
   }
 
   const buildMediaPayload = (urls: string[], includeAudio: boolean): EmbeddedRunPayload => ({
@@ -174,13 +207,20 @@ export function createPendingToolMediaCarry() {
   const batches: ToolMediaBatch[] = [];
   return {
     capture(attempt: ToolMediaBatch): void {
-      if (!attempt.toolMediaUrls?.length && !attempt.toolAudioAsVoice) {
+      if (
+        !attempt.toolMediaUrls?.length &&
+        attempt.toolMediaSelectionUrls === undefined &&
+        !attempt.toolAudioAsVoice
+      ) {
         return;
       }
       batches.push(
         copyCoreTtsAttemptResultProvenance(attempt, {
           toolMediaUrls: attempt.toolMediaUrls
             ? Object.freeze([...attempt.toolMediaUrls])
+            : undefined,
+          toolMediaSelectionUrls: attempt.toolMediaSelectionUrls
+            ? Object.freeze([...attempt.toolMediaSelectionUrls])
             : undefined,
           hostOwnedToolMediaUrls: attempt.hostOwnedToolMediaUrls
             ? Object.freeze([...attempt.hostOwnedToolMediaUrls])
@@ -207,9 +247,14 @@ export function createPendingToolMediaCarry() {
         ),
       }));
       const allBatches = [...pending, params];
+      const selectionIntent =
+        params.toolMediaSelectionUrls ??
+        batches.findLast((batch) => batch.toolMediaSelectionUrls !== undefined)
+          ?.toolMediaSelectionUrls;
       const selected = selectToolMedia({
         ...params,
         toolMediaUrls: allBatches.flatMap((batch) => batch.toolMediaUrls ?? []),
+        toolMediaSelectionUrls: selectionIntent,
       });
       const selectedUrls = new Set(selected.mediaUrls);
       const projected = allBatches.map((batch) =>
@@ -220,7 +265,7 @@ export function createPendingToolMediaCarry() {
           ),
         }),
       );
-      const owners = new Map<string, ToolMediaBatch>();
+      const owners = new Map<string, (typeof projected)[number]>();
       // Keep the existing host-before-TTS-before-generic projection for an
       // artifact appearing in multiple batches, without combining their flags.
       for (const field of [
@@ -239,6 +284,45 @@ export function createPendingToolMediaCarry() {
             }
           }
         }
+      }
+      const deliveries = projected.map((batch) => ({
+        batch,
+        mediaUrls: batch.toolMediaUrls.filter((url) => owners.get(url) === batch),
+        toolAutoDeliveryMediaUrls: batch.toolAutoDeliveryMediaUrls?.filter(
+          (url) => owners.get(url.trim()) === batch,
+        ),
+      }));
+      if (selectionIntent !== undefined) {
+        const ordered: typeof deliveries = [];
+        for (const url of selected.mediaUrls) {
+          const batch = owners.get(url);
+          if (!batch) {
+            continue;
+          }
+          const previous = ordered.at(-1);
+          if (previous?.batch === batch) {
+            previous.mediaUrls.push(url);
+          } else {
+            ordered.push({ batch, mediaUrls: [url], toolAutoDeliveryMediaUrls: undefined });
+          }
+        }
+        for (const delivery of ordered) {
+          delivery.toolAutoDeliveryMediaUrls = delivery.batch.toolAutoDeliveryMediaUrls?.filter(
+            (url) =>
+              owners.get(url.trim()) === delivery.batch && delivery.mediaUrls.includes(url.trim()),
+          );
+        }
+        // Explicit reference order can interleave origins. Each contiguous group
+        // keeps its original provenance; contract-only media retains its own batch.
+        for (const delivery of deliveries) {
+          const remaining = delivery.toolAutoDeliveryMediaUrls?.filter(
+            (url) => !selectedUrls.has(url.trim()),
+          );
+          if (remaining?.length) {
+            ordered.push({ ...delivery, mediaUrls: [], toolAutoDeliveryMediaUrls: remaining });
+          }
+        }
+        deliveries.splice(0, deliveries.length, ...ordered);
       }
       const visible = selected.payloads[selected.payloadIndex];
       // Existing assistant media has its own provenance; carried media must
@@ -264,11 +348,9 @@ export function createPendingToolMediaCarry() {
           });
         }
       }
-      for (const batch of projected) {
+      for (const { batch, mediaUrls, toolAutoDeliveryMediaUrls } of deliveries) {
         const owned = (urls: readonly string[] | undefined) =>
           urls?.filter((url) => owners.get(url.trim()) === batch);
-        const mediaUrls = owned(batch.toolMediaUrls) ?? [];
-        const toolAutoDeliveryMediaUrls = owned(batch.toolAutoDeliveryMediaUrls);
         if (batch.hadMedia && mediaUrls.length === 0 && !toolAutoDeliveryMediaUrls?.length) {
           continue;
         }

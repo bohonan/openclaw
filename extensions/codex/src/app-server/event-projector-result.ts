@@ -199,7 +199,11 @@ export abstract class CodexTurnProjection {
     // Close this turn's audit scope without inventing process completion. The
     // existing unknown-outcome diagnostic remains distinct from execution failure.
     this.nativeToolLifecycleProjector.finalizeActive(undefined, retainedCommands);
-    const assistantTexts = this.assistantProjection.collectAssistantTexts();
+    const nativeAssistantTexts = this.assistantProjection.collectAssistantTexts();
+    const { assistantTexts, ...mediaDelivery } = this.generatedMediaProjection.projectDelivery(
+      toolTelemetry,
+      nativeAssistantTexts,
+    );
     const asyncMessages = this.assistantProjection.collectAsyncMessages();
     const commentaryMessages = this.assistantProjection.collectCommentaryMessages();
     const reasoningText = this.reasoningProjection.reasoningText();
@@ -248,9 +252,27 @@ export abstract class CodexTurnProjection {
             assistantMessageOptions,
           )
         : undefined;
-    const currentAttemptAssistant = providerRefusal
+    const nativeCurrentAttemptAssistant = providerRefusal
       ? lastAssistant
       : this.assistantProjection.createCurrentAttemptAssistantMessage(assistantMessageOptions);
+    const rebasedFinalTexts = new Map<string, string>();
+    for (const [index, nativeText] of nativeAssistantTexts.entries()) {
+      const projectedText = assistantTexts[index];
+      if (projectedText !== undefined && projectedText !== nativeText) {
+        rebasedFinalTexts.set(nativeText, projectedText);
+      }
+    }
+    const currentAttemptAssistant =
+      nativeCurrentAttemptAssistant && rebasedFinalTexts.size > 0
+        ? {
+            ...nativeCurrentAttemptAssistant,
+            content: nativeCurrentAttemptAssistant.content.map((block) => {
+              const projectedText =
+                block.type === "text" ? rebasedFinalTexts.get(block.text.trim()) : undefined;
+              return projectedText === undefined ? block : { ...block, text: projectedText };
+            }),
+          }
+        : nativeCurrentAttemptAssistant;
     // Stable turn/item identities deduplicate retries and cross-turn replays
     // without collapsing identical text from distinct turns. Codex owns history;
     // this mirror supports OpenClaw history, search, and harness switching.
@@ -287,7 +309,6 @@ export abstract class CodexTurnProjection {
       Boolean(toolTelemetry.successfulCronAdds || toolTelemetry.acceptedSessionSpawns?.length) ||
       this.generatedMediaProjection.hasGeneratedMedia() ||
       this.toolProgressProjection.hasPotentialSideEffects;
-    const mediaDelivery = this.generatedMediaProjection.projectDelivery(toolTelemetry);
     const sentMediaUrls = new Set(
       mediaDelivery.messagingToolSentMediaUrls.map((url) => url.trim()),
     );
