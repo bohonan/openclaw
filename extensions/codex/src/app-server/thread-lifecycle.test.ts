@@ -19,10 +19,7 @@ import { createCodexManagedThreadStore } from "./managed-thread-store.js";
 import { buildCodexAppServerConnectionFingerprint } from "./plugin-app-cache-key.js";
 import type { CodexPluginThreadConfig } from "./plugin-thread-config.js";
 import { buildCodexProjectDocThreadConfig } from "./project-doc-thread-config.js";
-import {
-  CODEX_OPENCLAW_DIRECT_DYNAMIC_TOOL_NAMESPACE,
-  type CodexDynamicToolFunctionSpec,
-} from "./protocol.js";
+import { CODEX_OPENCLAW_DIRECT_DYNAMIC_TOOL_NAMESPACE } from "./protocol.js";
 import { resolveCodexAppServerReasoningEffort } from "./reasoning-effort.js";
 import {
   createCodexAppServerBindingStore,
@@ -566,60 +563,6 @@ describe("Codex app-server native code mode config", () => {
     });
     expect(instructions).toContain("`spawn_agent`");
     expect(instructions).not.toContain("`sessions_spawn`");
-  });
-
-  it("materializes the openclaw_direct prompt inventory once with matching guidance", () => {
-    const params = createAttemptParams({ provider: "openai" });
-    params.sourceReplyDeliveryMode = "message_tool_only";
-    let namespaceReads = 0;
-    const yieldTool: CodexDynamicToolFunctionSpec = {
-      type: "function",
-      name: "sessions_yield",
-      description: "End the current turn",
-      inputSchema: { type: "object" },
-    };
-    const tools = [
-      yieldTool,
-      ...["zeta_tool", "message", "skill_workshop", "alpha_tool", "sessions_spawn"].map(
-        (name): CodexDynamicToolFunctionSpec => ({
-          type: "function",
-          name,
-          description: name,
-          inputSchema: { type: "object" },
-          deferLoading: ["zeta_tool", "skill_workshop", "alpha_tool"].includes(name),
-        }),
-      ),
-    ];
-    const instructions = buildDeveloperInstructions(params, {
-      dynamicTools: [
-        yieldTool,
-        {
-          type: "namespace",
-          name: "openclaw_direct",
-          description: "",
-          get tools() {
-            namespaceReads += 1;
-            return tools;
-          },
-        },
-      ],
-    });
-    expect(namespaceReads).toBe(1);
-    expect(instructions.includes("`openclaw_direct.sessions_yield`")).toBe(true);
-    expect(instructions.includes("native `wait_agent`")).toBe(true);
-    expect(instructions).toContain(
-      "Deferred searchable OpenClaw dynamic tools available: alpha_tool, skill_workshop, zeta_tool.",
-    );
-    expect(instructions).toContain("## Skill Workshop");
-    expect(instructions).toContain("Use Codex native `spawn_agent` for Codex subagents");
-    expect(instructions).toContain("Use `tool_search` to find a tool that is not listed");
-    expect(instructions).toContain(
-      "Never use `exec` to look up a tool that is already listed, and do not re-run a completed call to get a result you already have.",
-    );
-    expect(instructions).not.toContain("On code-mode-only models");
-    expect(instructions).toContain(
-      "Use OpenClaw `sessions_spawn` only for OpenClaw or ACP delegation, never as a substitute for `spawn_agent` on internal legwork.",
-    );
   });
 
   it("keeps hashed dynamic tool fingerprints compatible with legacy JSON bindings", () => {

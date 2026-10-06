@@ -46,6 +46,7 @@ import {
   shouldAutoApproveCodexAppServerApprovals,
   withMcpElicitationsApprovalPolicy,
 } from "./config.js";
+import { joinPresentSections } from "./developer-instruction-sections.js";
 import {
   buildDynamicTools,
   resolveCodexExternalSandboxPolicyForOpenClawSandbox,
@@ -71,6 +72,10 @@ import { createCodexElicitationResponse } from "./elicitation-response.js";
 import { CodexEphemeralTurn } from "./ephemeral-turn.js";
 import { CodexNativeToolLifecycleProjector } from "./event-projector-native-tool-lifecycle.js";
 import {
+  buildCodexImageGenerationGuidance,
+  resolveCodexImageGenerationToolName,
+} from "./image-generation.js";
+import {
   buildCodexNativeHookRelayConfig,
   buildCodexNativeHookRelayDisabledConfig,
   resolveCodexNativeHookRelayEvents,
@@ -86,12 +91,7 @@ import {
   assertCodexTurnStartResponse,
   readCodexDynamicToolCallParams,
 } from "./protocol-validators.js";
-import {
-  isJsonObject,
-  type CodexThreadForkParams,
-  type JsonObject,
-  type JsonValue,
-} from "./protocol.js";
+import { isJsonObject, type JsonObject, type JsonValue } from "./protocol.js";
 import { resolveCodexProviderWebSearchSupportForClient } from "./provider-capabilities.js";
 import { readRecentCodexRateLimits } from "./rate-limit-cache.js";
 import { formatCodexUsageLimitErrorMessage } from "./rate-limits.js";
@@ -122,6 +122,7 @@ import {
   type CodexAppServerClientOptions,
 } from "./shared-client.js";
 import { cleanupCodexSideQuestion } from "./side-question-cleanup.js";
+import { forkCodexSideThread } from "./side-question-fork.js";
 import { SIDE_DEVELOPER_INSTRUCTIONS } from "./side-question-instructions.js";
 import { buildSideRunAttemptParams } from "./side-question-run-params.js";
 import {
@@ -133,7 +134,10 @@ import {
   CodexThreadPolicyHandoffError,
   refreshCodexThreadPolicy,
 } from "./thread-policy.js";
-import { buildCodexRuntimeThreadConfig } from "./thread-requests.js";
+import {
+  assertCodexImageGenerationPolicy,
+  buildCodexRuntimeThreadConfigForRun,
+} from "./thread-requests.js";
 import { resolveCodexToolAbortTerminalReason } from "./tool-abort-terminal-reason.js";
 import { buildCodexTemporalAdditionalContext } from "./turn-params.js";
 import type { CodexAppServerServerRequest, CodexThreadRouteScope } from "./turn-router.js";
@@ -634,10 +638,23 @@ export async function runCodexAppServerSideQuestion(
       : options.nativeHookRelay?.enabled === false
         ? buildCodexNativeHookRelayDisabledConfig()
         : undefined;
-    const runtimeThreadConfig = buildCodexRuntimeThreadConfig(webSearchPlan.threadConfig, {
-      nativeCodeModeEnabled: nativeToolSurfaceEnabled,
-      nativeCodeModeOnlyEnabled: appServer.codeModeOnly,
-    });
+    const runtimeThreadConfig = buildCodexRuntimeThreadConfigForRun(
+      sideRunParams,
+      webSearchPlan.threadConfig,
+      {
+        nativeCodeModeEnabled: nativeToolSurfaceEnabled,
+        nativeCodeModeOnlyEnabled: appServer.codeModeOnly,
+        nativeProviderWebSearchSupport,
+        webSearchAllowed: webSearchPlan.kind === "native-hosted",
+      },
+    );
+    const sideDeveloperInstructions = joinPresentSections(
+      SIDE_DEVELOPER_INSTRUCTIONS,
+      buildCodexImageGenerationGuidance(
+        params.cfg,
+        resolveCodexImageGenerationToolName(toolBridge.availableSpecs),
+      ),
+    );
     const sideThreadId = await withLeasedCodexAppServerClientStartSelectionRetry({
       lease: clientLease,
       options: clientOptions,
@@ -706,6 +723,13 @@ export async function runCodexAppServerSideQuestion(
                 pluginAppsConfigPatch,
                 appServer.networkProxy?.configPatch,
               ) ?? runtimeThreadConfig;
+            await assertCodexImageGenerationPolicy({
+              client: forkClient,
+              cwd: executionCwd,
+              threadConfig,
+              signal: runAbortController.signal,
+            });
+            assertCurrentBinding();
             const response = assertCodexThreadForkResponse(
               await forkCodexSideThread(
                 forkClient,
@@ -724,7 +748,7 @@ export async function runCodexAppServerSideQuestion(
                   ...(sandboxEnvironment || appServer.networkProxy ? {} : { sandbox }),
                   ...(serviceTier ? { serviceTier } : {}),
                   config: threadConfig,
-                  developerInstructions: SIDE_DEVELOPER_INSTRUCTIONS,
+                  developerInstructions: sideDeveloperInstructions,
                   ephemeral: true,
                   // Paginated ephemeral forks require metadata-only responses; history stays native.
                   excludeTurns: true,
@@ -770,7 +794,7 @@ export async function runCodexAppServerSideQuestion(
               await refreshCodexThreadPolicy({
                 client: forkClient,
                 threadId: childThreadId,
-                developerInstructions: SIDE_DEVELOPER_INSTRUCTIONS,
+                developerInstructions: sideDeveloperInstructions,
                 ...scoped,
                 withCurrent: authority.withCurrent,
                 signal: runAbortController.signal,
@@ -1041,32 +1065,6 @@ async function createCodexSideToolBridge(input: {
     }),
     webSearchPlan,
   };
-}
-
-async function forkCodexSideThread(
-  client: CodexAppServerClient,
-  params: CodexThreadForkParams,
-  options: { timeoutMs: number; signal?: AbortSignal },
-): Promise<unknown> {
-  try {
-    return await client.request("thread/fork", params, options);
-  } catch (error) {
-    if (isMissingCodexParentThreadError(error)) {
-      throw new Error(
-        "Codex /btw needs an active Codex thread. Send a normal message first, then try /btw again.",
-        { cause: error },
-      );
-    }
-    throw error;
-  }
-}
-
-function isMissingCodexParentThreadError(error: unknown): boolean {
-  const message = formatErrorMessage(error);
-  return (
-    message.includes("no rollout found for thread id") ||
-    message.includes("includeTurns is unavailable before first user message")
-  );
 }
 
 function formatCodexErrorMessage(params: JsonObject, rateLimits: JsonValue | undefined): Error {

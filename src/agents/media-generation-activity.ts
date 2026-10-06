@@ -12,6 +12,7 @@ export type MediaGenerationOperation = {
   requesterSessionKey: string;
   requesterAgentId?: string;
   task?: string;
+  requestKey?: string;
   status: "queued" | "running" | "succeeded" | "failed";
   createdAt: number;
   startedAt?: number;

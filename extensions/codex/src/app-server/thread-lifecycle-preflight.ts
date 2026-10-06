@@ -18,6 +18,7 @@ import {
   isMessageOnlyCodexSourceReply,
   isSystemAgentOnlyCodexDynamicToolAllowlist,
 } from "./dynamic-tool-profile.js";
+import { assertCodexImageGenerationEffectiveConfig } from "./image-generation.js";
 import {
   assertCodexInferenceRouteConfig,
   bindCodexInferenceThread,
@@ -61,6 +62,7 @@ import { resolveCodexAppServerThreadModelSelection } from "./thread-model-select
 import {
   assertCodexManagedRequirementsDoNotOverrideToolPolicy,
   buildCodexRingZeroThreadConfigPatch,
+  buildCodexRuntimeThreadConfigForRun,
   CODEX_RING_ZERO_BASE_INSTRUCTIONS,
   readCodexInheritedMcpServerNames,
 } from "./thread-requests.js";
@@ -366,7 +368,10 @@ export async function prepareCodexThreadLifecyclePreflight(params: CodexStartOrR
     !messageOnlySourceReply &&
     params.params.scheduledRuntimeAuthority === undefined;
   const imageGenerationDenied =
-    params.params.pluginHarnessToolPolicySafeDeniedTools?.includes("image_generate") === true;
+    buildCodexRuntimeThreadConfigForRun(params.params, params.config, {
+      nativeCodeModeEnabled: params.nativeCodeModeEnabled,
+      hostSystemAgentActive,
+    })["features.image_generation"] === false;
   if (restrictedToolSurface && params.nativeCodeModeEnabled !== false) {
     throw new Error("Codex restricted tool surfaces require native code mode to be disabled");
   }
@@ -410,6 +415,9 @@ export async function prepareCodexThreadLifecyclePreflight(params: CodexStartOrR
     );
   }
   const features = effectiveConfig?.config.features;
+  if (imageGenerationDenied) {
+    assertCodexImageGenerationEffectiveConfig(effectiveConfig);
+  }
   // Legacy managed layers outrank session flags without appearing in requirements.
   // Their effective shell denial must fence native capture before thread startup.
   if (

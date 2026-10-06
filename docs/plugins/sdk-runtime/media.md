@@ -36,6 +36,37 @@ JavaScript-only host export; its declarations are excluded from the package.
 
 ## Media and generation namespaces
 
+Plugins that project generated images into final replies can use the shared
+media parser from `openclaw/plugin-sdk/media-generation-runtime`:
+
+```typescript
+import { splitMediaFromOutput } from "openclaw/plugin-sdk/media-generation-runtime";
+
+const selected = splitMediaFromOutput(finalText, {
+  extractAudioDirectives: false,
+  extractMediaDirectives: false,
+  preserveTrailingWhitespace: true,
+  markdownImageAllowlist: recordedImageReferences,
+});
+```
+
+The allowlist limits extraction to explicit Markdown image references owned by
+the caller. Ordinary links, code, and unrecognized images remain visible text.
+The parser does not read files or grant media access; the existing media owner
+still supplies and authorizes the selected artifacts.
+
+The optional `onMarkdownImage` callback receives each accepted image's
+`sourceUrl`, `start`, and `end` offsets in the original input. Callers can use
+those spans to rebase owned references in place without changing surrounding
+Markdown or reference order.
+
+Harness attempt results can carry `toolMediaSelectionUrls` as explicit ordered
+final selection evidence, including references to images already delivered.
+Core intersects this list with eligible `toolMediaUrls`; the selection does not
+grant media access. `undefined` retains normal selection and fallback behavior,
+while an empty list explicitly selects no tool media. Carried attempts retain
+this evidence until a later explicit selection replaces it.
+
 <AccordionGroup>
   <Accordion title="api.runtime.tts">
     Text-to-speech synthesis.

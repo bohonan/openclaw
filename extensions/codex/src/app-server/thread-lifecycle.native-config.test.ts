@@ -66,6 +66,54 @@ describe("Codex native configuration lifecycle", () => {
     throw new Error(`unexpected method: ${method}`);
   }
 
+  it.each([
+    { layer: "legacyManagedConfigTomlFromFile", canOverride: false },
+    { layer: "legacyManagedConfigTomlFromMdm", canOverride: false },
+    { layer: "user", canOverride: true },
+  ])(
+    "honors configured image routing when native images are enabled by $layer",
+    async ({ layer, canOverride }) => {
+      params.disableTools = false;
+      params.config = {
+        agents: { defaults: { mediaModels: { image: "google/test-image-model" } } },
+      };
+      const fixture = await createLeasedCodexLifecycleHarness({
+        agentDir: path.join(tempDir, "agent"),
+        respond: async (method) => {
+          if (method === "config/read") {
+            const origin = { name: { type: layer } };
+            return {
+              config: { features: { image_generation: true } },
+              origins: { "features.image_generation": origin },
+              layers: [origin],
+            };
+          }
+          if (method === "configRequirements/read") {
+            return { requirements: null };
+          }
+          if (method === "thread/start") {
+            return threadStartResult("configured-image-thread");
+          }
+          throw new Error(`unexpected method: ${method}`);
+        },
+      });
+      const pending = startOrResumeThread(lifecycleParams(fixture.client));
+      if (canOverride) {
+        await expect(pending).resolves.toMatchObject({ threadId: "configured-image-thread" });
+        expect(
+          fixture.request.mock.calls.find(([method]) => method === "thread/start")?.[1],
+        ).toMatchObject({ config: { "features.image_generation": false } });
+      } else {
+        await expect(pending).rejects.toThrow(/image.*cannot.*overrid/iu);
+        expect(
+          fixture.request.mock.calls.some(([method]) =>
+            ["thread/start", "thread/resume", "thread/fork", "turn/start"].includes(method),
+          ),
+        ).toBe(false);
+      }
+    },
+  );
+
   it.each([false, true])(
     "validates every operator parent provider in final native config (overridden: %s)",
     async (overridden) => {

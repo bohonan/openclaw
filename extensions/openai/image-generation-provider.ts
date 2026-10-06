@@ -259,7 +259,7 @@ function resolveOpenAIImageRequestSize(
   metadata?: Record<string, string>;
 } {
   const requestedSize = params.requestedSize ?? DEFAULT_SIZE;
-  if (!params.applyNativeLimits) {
+  if (!params.applyNativeLimits || isValidFlexibleOpenAIImageSize(params.model, requestedSize)) {
     return { size: requestedSize };
   }
   const supportedSizes = resolveNativeOpenAIImageSizesForModel(params.model);
@@ -589,6 +589,7 @@ async function generateOpenAICodexImage(params: {
           {
             type: "image_generation",
             model,
+            action: inputImages.length > 0 ? "edit" : "generate",
             size,
             ...resolveOpenAIImageOptions(req),
           },
@@ -832,16 +833,14 @@ export function buildOpenAIImageGenerationProvider(
       });
       const count = resolveIntegerOption(req.count, 1, { min: 1, max: OPENAI_MAX_IMAGE_RESULTS });
       const timeoutMs = resolveOpenAIImageTimeoutMs(req.timeoutMs, { isAzure });
-      const sizeResolution = isValidFlexibleOpenAIImageSize(model, req.size)
-        ? { size: req.size }
-        : resolveOpenAIImageRequestSize(
-            {
-              model,
-              requestedSize: req.size,
-              applyNativeLimits: publicOpenAIBaseUrl || isAzure,
-            },
-            resolveClosestSize,
-          );
+      const sizeResolution = resolveOpenAIImageRequestSize(
+        {
+          model,
+          requestedSize: req.size,
+          applyNativeLimits: publicOpenAIBaseUrl || isAzure,
+        },
+        resolveClosestSize,
+      );
       const size = sizeResolution.size;
       const url = isAzure
         ? buildAzureImageUrl(rawBaseUrl, model, isEdit ? "edits" : "generations")

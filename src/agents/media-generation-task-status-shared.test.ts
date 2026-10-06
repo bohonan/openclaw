@@ -12,7 +12,6 @@ import {
   createMediaGenerationTaskStatusOwner,
   MEDIA_GENERATION_DELIVERING_COMPLETION_PROGRESS,
 } from "./media-generation-task-status-shared.js";
-import { resetRecentMediaGenerationDuplicateGuardsForTests } from "./media-generation-task-status-shared.test-support.js";
 
 const mediaActivityMocks = vi.hoisted(() => ({
   listMediaGenerationOperations: vi.fn(),
@@ -44,7 +43,6 @@ function makeTask(overrides: Partial<MediaGenerationOperation> = {}): MediaGener
 }
 
 beforeEach(() => {
-  resetRecentMediaGenerationDuplicateGuardsForTests();
   mediaActivityMocks.listMediaGenerationOperations.mockReset();
 });
 

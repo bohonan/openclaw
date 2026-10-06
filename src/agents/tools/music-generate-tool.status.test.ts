@@ -9,8 +9,6 @@ vi.mock("../media-generation-activity.js", async (importOriginal) => {
 // actions for background music tasks.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as musicGenerationRuntime from "../../music-generation/runtime.js";
-import { recordRecentMediaGenerationTaskStartForSession } from "../media-generation-task-status-shared.js";
-import { resetRecentMediaGenerationDuplicateGuardsForTests } from "../media-generation-task-status-shared.test-support.js";
 import { MUSIC_GENERATION_TASK_KIND } from "../media-generation-task-status.js";
 import {
   createMusicGenerateDuplicateGuardResult,
@@ -37,7 +35,6 @@ function resetMusicStatusMocks() {
   mediaActivityMocks.listMediaGenerationOperations.mockImplementation((ownerKey) =>
     mediaActivityMocks.listOperations(ownerKey),
   );
-  resetRecentMediaGenerationDuplicateGuardsForTests();
 }
 
 describe("createMusicGenerateTool status actions", () => {
@@ -76,7 +73,7 @@ describe("createMusicGenerateTool status actions", () => {
     expect(result?.content).toStrictEqual([
       {
         type: "text",
-        text: "Music generation task task-active is already running with google.\nProgress: Generating music.\nDo not call music_generate again for this request. Do not wait, poll, or yield for it: end this turn; the completion arrives as a later turn and sends the finished music here.",
+        text: "Music generation task task-active is already running with google.\nProgress: Generating music.\nDo not resubmit this same pending generation. You may call music_generate for other requested assets or revisions. After starting all independent requests, end this turn; do not wait, poll, or yield. Each completion arrives as a later turn and sends its finished music here.",
       },
     ]);
     expect(result?.details).toMatchObject({
@@ -130,21 +127,10 @@ describe("createMusicGenerateTool status actions", () => {
 
   it("returns recent succeeded music status instead of starting a duplicate generation", async () => {
     const now = Date.now();
-    recordRecentMediaGenerationTaskStartForSession({
-      sessionKey: "agent:main:discord:direct:123",
-      taskKind: MUSIC_GENERATION_TASK_KIND,
-      sourcePrefix: "music_generate",
-      taskId: "task-recent-music",
-      runId: "tool:music_generate:recent",
-      taskLabel: "night-drive synthwave",
-      requestKey: "music-request:night-drive",
-      providerId: "google",
-      progressSummary: "Generating music",
-      nowMs: now - 20_000,
-    });
     mediaActivityMocks.listOperations.mockReturnValue([
       {
         taskId: "task-recent-music",
+        requestKey: "music-request:night-drive",
         runtime: "cli",
         taskKind: MUSIC_GENERATION_TASK_KIND,
         sourceId: "music_generate:google",

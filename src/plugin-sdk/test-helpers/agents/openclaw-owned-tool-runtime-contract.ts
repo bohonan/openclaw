@@ -325,6 +325,7 @@ export async function createHostTtsRuntimeContract(
       (
         mergeAttemptToolMediaPayloads({
           toolMediaUrls: result.toolMediaUrls,
+          toolMediaSelectionUrls: result.toolMediaSelectionUrls,
           hostOwnedToolMediaUrls: result.hostOwnedToolMediaUrls,
           toolAutoDeliveryMediaUrls: getCoreTtsAttemptResultMediaUrls(
             result,

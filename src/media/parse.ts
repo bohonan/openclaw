@@ -1,5 +1,5 @@
 import { findMarkdownImageSpans } from "../../packages/markdown-core/src/image-spans.js";
-import { splitMediaOutput } from "./parse-output.js";
+import { splitMediaOutput, type ParsedMarkdownImageReference } from "./parse-output.js";
 
 /** Controls which non-MEDIA syntaxes may be lifted into media attachments. */
 type SplitMediaFromOutputOptions = {
@@ -10,6 +10,8 @@ type SplitMediaFromOutputOptions = {
   markdownImageAllowlist?: readonly string[];
   /** Observes accepted audio directives after media extraction. */
   onAudioDirective?: () => void;
+  /** Observes accepted Markdown images at their original source offsets. */
+  onMarkdownImage?: (image: ParsedMarkdownImageReference) => void;
 };
 
 /** Splits tool/stdout text into visible text, media attachments, voice tags, and ordered segments. */

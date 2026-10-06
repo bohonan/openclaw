@@ -22,6 +22,8 @@ export type ThreadReleaseTransition = {
 export type CodexEphemeralThreadPolicy = {
   developerInstructions?: string;
   refreshableInstructions?: string;
+  /** Native tools cannot be reconfigured without losing an ephemeral thread. */
+  nativeImageGenerationDisabled?: true;
   /**
    * Refreshable section carried by the thread's creation-time native developer instructions.
    * Compaction rebuilds initial context from those instructions and drops the
@@ -185,14 +187,16 @@ export function revertRetainedThreadInstructions(
 export function createCodexEphemeralThreadPolicy({
   developerInstructions,
   refreshableInstructions,
+  nativeImageGenerationDisabled,
 }: Pick<
   CodexEphemeralThreadPolicy,
-  "developerInstructions" | "refreshableInstructions"
+  "developerInstructions" | "refreshableInstructions" | "nativeImageGenerationDisabled"
 >): CodexEphemeralThreadPolicy {
   return {
     developerInstructions,
     refreshableInstructions,
     nativeRefreshableInstructions: refreshableInstructions,
+    ...(nativeImageGenerationDisabled ? { nativeImageGenerationDisabled } : {}),
   };
 }
 

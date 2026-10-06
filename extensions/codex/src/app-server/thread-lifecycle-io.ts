@@ -646,7 +646,11 @@ export async function startFreshCodexThread(
       response.modelProvider ?? requestModelProvider ?? startModelProvider ?? modelProvider,
     // Restricted ephemeral threads also need creation policy for fenced warm reuse.
     liveThreadEphemeralPolicy: startParams.ephemeral
-      ? createCodexEphemeralThreadPolicy(params)
+      ? createCodexEphemeralThreadPolicy({
+          ...params,
+          nativeImageGenerationDisabled:
+            startParams.config?.["features.image_generation"] === false ? true : undefined,
+        })
       : undefined,
     // Transient starts do not own the persisted binding, so their native
     // subscriptions must be released instead of entering the warm cache.

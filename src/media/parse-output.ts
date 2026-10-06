@@ -37,11 +37,18 @@ type ParsedMediaOutputSegment =
       url: string;
     };
 
+export type ParsedMarkdownImageReference = {
+  sourceUrl: string;
+  start: number;
+  end: number;
+};
+
 type SplitMediaOutputOptions = {
   extractAudioDirectives?: boolean;
   extractMediaDirectives?: boolean;
   preserveTrailingWhitespace?: boolean;
   onAudioDirective?: () => void;
+  onMarkdownImage?: (image: ParsedMarkdownImageReference) => void;
 };
 
 type MarkdownImageExtraction = {
@@ -365,10 +372,12 @@ function removeMarkdownImageSpans(line: string, matches: MarkdownImageMatch[]): 
 
 function collectMarkdownImageSegments(params: {
   line: string;
+  lineOffset: number;
   matches: MarkdownImageMatch[];
   media: string[];
   allowlist?: ReadonlyMap<string, string>;
   preserveTrailingWhitespace?: boolean;
+  onMarkdownImage?: SplitMediaOutputOptions["onMarkdownImage"];
 }): {
   cleanedLine?: string;
   lineSegments: ParsedMediaOutputSegment[];
@@ -404,6 +413,11 @@ function collectMarkdownImageSegments(params: {
       segmentPieces.length = 0;
       const mediaTarget = selectedTarget ?? target;
       params.media.push(mediaTarget);
+      params.onMarkdownImage?.({
+        sourceUrl: mediaTarget,
+        start: params.lineOffset + match.start,
+        end: params.lineOffset + match.end,
+      });
       lineSegments.push({ type: "media", url: mediaTarget });
       foundMedia = true;
     } else {
@@ -575,10 +589,12 @@ export function splitMediaOutput(
       const markdownImageResult = extractMarkdownImages
         ? collectMarkdownImageSegments({
             line,
+            lineOffset,
             matches: lineImages,
             media,
             allowlist: markdownImageAllowlist,
             preserveTrailingWhitespace: options.preserveTrailingWhitespace,
+            onMarkdownImage: options.onMarkdownImage,
           })
         : { lineSegments: [], foundMedia: false };
       if (!markdownImageResult.foundMedia) {

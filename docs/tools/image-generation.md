@@ -140,6 +140,19 @@ Task status and duplicate detection are scoped to the requesting chat, even
 when direct chats share the main session transcript. Completion returns to
 the peer who requested the image.
 
+### Multiple assets and revisions
+
+Use separate `image_generate` calls for distinct requested assets, with a
+prompt for each asset. `count` produces variations of one prompt; it does not
+assign different instructions to each image. Start all independent requests
+before ending the turn. Each background task delivers its own completion.
+
+Duplicate detection compares the prompt, model, reference paths, and output
+settings. An identical pending request returns its existing task; a request
+with a different reference or setting can start even when its prompt matches.
+Successful identical requests also reuse their status for two minutes after
+completion. Avoid resubmitting or polling while waiting for a task.
+
 ## Provider capabilities
 
 | Capability            | ComfyUI            | DeepInfra | fal                                                         | Google         | Microsoft Foundry | MiniMax               | OpenAI         | Vydra | xAI            |
@@ -190,7 +203,7 @@ the peer who requested the image.
   Background hint when the provider supports it. Use `transparent` with
   `outputFormat: "png"` or `"webp"` for transparency-capable providers.
 </ParamField>
-<ParamField path="count" type="number">Number of images to generate (1-4).</ParamField>
+<ParamField path="count" type="number">Number of variations of one prompt (1-4).</ParamField>
 <ParamField path="timeoutMs" type="number">
   Optional provider request timeout in milliseconds. When Codex calls
   `image_generate` through dynamic tools, this per-call value still overrides
@@ -239,6 +252,13 @@ translation.
 ```
 
 ### Provider selection order
+
+With the Codex harness, an explicit image primary, fallback list, or timeout
+also disables Codex's separate native image-generation tool, so it cannot bypass
+this configuration. Without those settings, eligible Codex sessions prefer
+native generation for requests without an explicit provider/model; the managed
+tool remains available for explicit overrides and supported API parameters.
+See [Codex image routing](/plugins/codex-harness/runtime-behavior#image-generation-routing).
 
 For `image_generate`, OpenClaw tries providers in this order:
 
@@ -292,6 +312,13 @@ inputs. Pass a reference image path or URL:
 ```text
 "Generate a watercolor version of this photo" + image: "/path/to/photo.jpg"
 ```
+
+For a subsequent edit, pass the latest generated image path as `image` (or
+include it in `images`) and describe the changes to make. The image source is
+explicit on each call; a previous prompt or task id does not supply its pixels.
+Wait for that output before starting an edit that depends on it. Through
+OpenAI's Codex Responses route, requests with references explicitly select
+image editing; requests without references select image generation.
 
 OpenAI, OpenRouter, and Google support up to 5 reference images via the
 `images` parameter. xAI supports up to 3. fal supports 1 reference image for
@@ -353,7 +380,8 @@ and ComfyUI support 1.
     those into a supported `size`, otherwise the tool reports them as
     ignored overrides.
 
-    For direct OpenAI Images API requests, `gpt-image-2` and its
+    Through both the direct OpenAI Images API and ChatGPT/Codex OAuth,
+    `gpt-image-2` and its
     `gpt-image-2-2026-04-21` snapshot preserve valid explicit
     `WIDTHxHEIGHT` sizes instead of snapping them to presets. Both
     dimensions must be multiples of 16, neither may exceed 3840 pixels,

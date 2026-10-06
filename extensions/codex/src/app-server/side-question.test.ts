@@ -31,6 +31,7 @@ import { CodexNativeToolLifecycleProjector } from "./event-projector-native-tool
 import { buildCodexAppServerConnectionFingerprint } from "./plugin-app-cache-key.js";
 import { createSandboxContext } from "./sandbox-exec-server.test-helpers.js";
 import { createCodexTestBindingStore } from "./session-binding.test-helpers.js";
+import { registerSideQuestionToolPolicyTests } from "./side-question-tool-policy.test-support.js";
 import { createClientHarness, createCodexTestModel } from "./test-support.js";
 
 const {
@@ -1100,30 +1101,7 @@ describe("runCodexAppServerSideQuestion", () => {
     },
   );
 
-  it("disables hosted search when side-question sender policy removes managed web_search", async () => {
-    createOpenClawCodingToolsMock.mockImplementation((options: { senderId?: string }) =>
-      options.senderId === "restricted-sender"
-        ? []
-        : [
-            {
-              name: "web_search",
-              description: "Search the web",
-              parameters: { type: "object", properties: {}, additionalProperties: true },
-              execute: toolExecuteMock,
-            },
-          ],
-    );
-
-    const { forkConfig } = await runSideQuestionWithManagedWebSearchCall(
-      sideParams({ senderId: "restricted-sender" }),
-      { preserveToolFactory: true },
-    );
-
-    expect(forkConfig).toMatchObject({
-      "features.standalone_web_search": false,
-      web_search: "disabled",
-    });
-  });
+  registerSideQuestionToolPolicyTests();
 
   it("rejects side questions before forking when the tool allowlist excludes native tools", async () => {
     await expect(

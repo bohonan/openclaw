@@ -49,6 +49,7 @@ import {
 } from "./shared-client.js";
 import { createClientHarness } from "./test-support.js";
 import { fingerprintEnvironmentSelection } from "./thread-fingerprints.js";
+import { registerThreadImageGenerationTests } from "./thread-lifecycle-image-generation.test-support.js";
 import { registerThreadPolicyRefreshTests } from "./thread-lifecycle-policy-refresh.test-support.js";
 import { registerRequiredRootThreadPolicyTests } from "./thread-lifecycle-rooted.test-support.js";
 import { startOrResumeThread as startOrResumeThreadImpl } from "./thread-lifecycle-run.js";
@@ -781,6 +782,16 @@ describe("Codex app-server thread lifecycle bindings", () => {
     }
   });
 
+  registerThreadImageGenerationTests({
+    createParams,
+    createPaths,
+    createFixedThreadRequest,
+    startOrResumeThread,
+    retainThread,
+    preflightMethods: PREFLIGHT_METHODS,
+    warmResumeMethods: WARM_RESUME_METHODS,
+  });
+
   registerThreadPolicyRefreshTests({
     createParams,
     createThreadLifecycleAppServerOptions,
@@ -981,40 +992,6 @@ describe("Codex app-server thread lifecycle bindings", () => {
       config: { "features.hooks": true, "hooks.PreToolUse": [] },
     });
     expect(JSON.stringify(resumeConfig)).not.toContain("openclaw hooks relay");
-  });
-
-  it("cold-resumes a warm thread when final config adds an image-generation deny", async () => {
-    const sessionFile = path.join(tempDir, "warm-image-deny-session.jsonl");
-    const workspaceDir = path.join(tempDir, "warm-image-deny-workspace");
-    const params = createParams(sessionFile, workspaceDir);
-    const respond = createFixedThreadRequest("thread-warm-image-deny", [
-      "thread/start",
-      "thread/resume",
-    ]);
-    const fixture = await createLeasedCodexLifecycleHarness({
-      agentDir: path.join(tempDir, "agent"),
-      respond,
-    });
-    const { client, request } = fixture;
-    const common = {
-      client,
-      params,
-      userMcpServersEnabled: false,
-    };
-
-    const started = await startOrResumeThread(common);
-    await expect(retainThread(client, started)).resolves.toBe(true);
-    params.pluginHarnessToolPolicySafeDeniedTools = ["image_generate"];
-    const resumed = await startOrResumeThread(common);
-
-    expect(resumed).toMatchObject({
-      threadId: "thread-warm-image-deny",
-      lifecycle: { action: "resumed" },
-    });
-    expect(request.mock.calls.map(([method]) => method)).toEqual(WARM_RESUME_METHODS);
-    expect(request.mock.calls.find(([method]) => method === "thread/resume")?.[1]).toMatchObject({
-      config: { "features.image_generation": false },
-    });
   });
 
   it("keeps a warm native session across sticky environment selection changes", async () => {
@@ -1723,13 +1700,21 @@ describe("Codex app-server thread lifecycle bindings", () => {
   it.each([
     { change: "policy", policy: "generic policy v2", skills: "## OpenClaw Skills\n\nweather" },
     { change: "skills", policy: "generic policy", skills: undefined },
+    { change: "configured image model", policy: "generic policy", skills: undefined },
+    { change: "removed image model", policy: "generic policy", skills: undefined },
   ] as const)(
-    "refreshes live incognito instructions but refuses generic policy drift ($change: $skills)",
+    "refreshes live incognito instructions but refuses policy or image routing drift ($change: $skills)",
     async ({ change, policy, skills }) => {
       const sessionFile = path.join(tempDir, "incognito-session.jsonl");
       const workspaceDir = path.join(tempDir, "incognito-workspace");
       const params = createParams(sessionFile, workspaceDir);
       params.sessionKey = "agent:main:dashboard:incognito-skill-refresh";
+      const configuredImageModel = {
+        agents: { defaults: { mediaModels: { image: "google/test-image-model" } } },
+      };
+      if (change === "removed image model") {
+        params.config = configuredImageModel;
+      }
       const request = vi.fn(async (method: string, _params?: unknown) => {
         if (method === "config/read") {
           return { layers: [], config: { mcp_servers: {} } };
@@ -1770,6 +1755,7 @@ describe("Codex app-server thread lifecycle bindings", () => {
         refreshableInstructions: firstSkills,
         // Creation carries the catalog natively, so compaction restores this one.
         nativeRefreshableInstructions: firstSkills,
+        ...(change === "removed image model" ? { nativeImageGenerationDisabled: true } : {}),
       });
       expect(request.mock.calls.find(([method]) => method === "thread/start")?.[1]).toEqual(
         expect.objectContaining({
@@ -1789,13 +1775,18 @@ describe("Codex app-server thread lifecycle bindings", () => {
         request.mock.calls
           .filter(([method]) => method.startsWith("thread/"))
           .map(([method, requestParams]) => [method, requestParams]);
+      const imageRoutingChanged =
+        change === "configured image model" || change === "removed image model";
+      if (imageRoutingChanged) {
+        params.config = change === "configured image model" ? configuredImageModel : undefined;
+      }
       const secondTurn = {
         ...common,
         developerInstructions: policy,
-        refreshableInstructions: skills,
+        refreshableInstructions: imageRoutingChanged ? firstSkills : skills,
       };
 
-      if (change === "policy") {
+      if (change === "policy" || imageRoutingChanged) {
         await expect(startOrResumeThread(secondTurn)).rejects.toBeInstanceOf(
           CodexIncognitoPolicyChangeError,
         );
@@ -2267,30 +2258,6 @@ describe("Codex app-server thread lifecycle bindings", () => {
       "thread/start",
       "mcpServerStatus/list",
     ]);
-  });
-
-  it("fails closed when requirements pin denied image generation on", async () => {
-    const { sessionFile, workspaceDir } = createPaths();
-    const params = createParams(sessionFile, workspaceDir);
-    params.pluginHarnessToolPolicySafeDeniedTools = ["image_generate"];
-    const request = vi.fn(async (method: string) => {
-      if (method === "config/read") {
-        return { config: {}, layers: [] };
-      }
-      if (method === "configRequirements/read") {
-        return { requirements: { featureRequirements: { image_generation: true } } };
-      }
-      throw new Error(`unexpected method: ${method}`);
-    });
-
-    await expect(
-      startOrResumeThread({
-        client: { request } as never,
-        params,
-        userMcpServersEnabled: false,
-      }),
-    ).rejects.toThrow("cannot override required feature image_generation");
-    expect(request.mock.calls.map(([method]) => method)).toEqual([...PREFLIGHT_METHODS]);
   });
 
   it.each([
@@ -2961,10 +2928,10 @@ describe("Codex app-server thread lifecycle bindings", () => {
       ...PREFLIGHT_METHODS,
       "thread/start",
       "thread/unsubscribe",
-      "config/read",
+      ...PREFLIGHT_METHODS,
       "thread/start",
       "thread/unsubscribe",
-      "config/read",
+      ...PREFLIGHT_METHODS,
       "thread/read",
       "thread/resume",
       "thread/inject_items",
@@ -3231,7 +3198,7 @@ describe("Codex app-server thread lifecycle bindings", () => {
     expect(buildDenyAllPluginThreadConfig).toHaveBeenCalledTimes(1);
     const requestCalls = request.mock.calls;
     expect(requestCalls.map(([method]) => method)).toEqual([
-      "config/read",
+      ...PREFLIGHT_METHODS,
       "thread/start",
       "thread/unsubscribe",
       ...PREFLIGHT_METHODS,

@@ -1,6 +1,7 @@
 import { pathToFileURL } from "node:url";
 import type { AgentToolResult } from "openclaw/plugin-sdk/agent-core";
 import {
+  buildContractReplyPayloads,
   installCodexToolResultMiddleware,
   resetOpenClawOwnedToolHooks,
 } from "openclaw/plugin-sdk/agent-runtime-test-contracts";
@@ -144,7 +145,7 @@ async function createRemoteGeneratedMediaDelivery(
     }
     return Buffer.from(dataBase64, "base64");
   });
-  return { projector, bridge, execute, sources };
+  return { params, projector, bridge, execute, sources };
 }
 
 let openClawState: OpenClawTestState;
@@ -160,6 +161,140 @@ afterEach(async () => {
 });
 
 describe("CodexAppServerEventProjector media projection", () => {
+  it.each([
+    "revision",
+    "managed",
+    "reverse-order",
+    "mixed",
+    "native-first",
+    "interleaved",
+    "delivered",
+    "unowned",
+    "copied",
+    "ordinary-link",
+    "code",
+    "no-references",
+  ] as const)(
+    "delivers final native image selections without draft leakage: %s",
+    async (selection) => {
+      const { params, projector, bridge, sources } = await createRemoteGeneratedMediaDelivery(
+        async (args) => ({
+          content: [{ type: "text", text: "Sent to current chat." }],
+          details: {
+            deliveryStatus: "sent",
+            sourceReplySink: "internal-ui",
+            sourceReply: { text: "Attached.", mediaUrls: [args.mediaUrl] },
+            messageDelivery: { ...receipt(), sourceReplyDelivered: true },
+          },
+        }),
+      );
+      const inventory = resultOf(projector).toolMediaUrls;
+      const revisionUrl = inventory?.[1];
+      if (!revisionUrl) {
+        throw new Error("Expected the fixture's materialized revision");
+      }
+      const siblingUrl = "https://example.test/sibling.png";
+      const secondSiblingUrl = "https://example.test/sibling-second.png";
+      const finalText = {
+        revision: `Ready.\n![Final](<${sources.second}>)`,
+        managed: `Ready.\n![Final](<${revisionUrl.replaceAll("\\", "\\\\")}>)`,
+        "reverse-order": `Ready.\n![Second](<${sources.second}>)\n![First](<${sources.first}>)`,
+        mixed: `Ready.\n![Sibling](${siblingUrl})\n![Final](<${sources.second}>)`,
+        "native-first": `Ready.\n![Final](<${sources.second}>)\n![Sibling](${siblingUrl})`,
+        interleaved: `Ready.\n![Second](<${sources.second}>)\n![Sibling](${siblingUrl})\n![First](<${sources.first}>)\n![Other](${secondSiblingUrl})`,
+        delivered: `Ready.\n![Final](<${sources.second}>)`,
+        unowned: "Ready.\n![Unowned](</remote/codex-workspace/unowned.png>)",
+        copied: "Ready.\n![Final](</remote/codex-workspace/final-copy.png>)",
+        "ordinary-link": `Ready.\n[Final](<${sources.second}>)`,
+        code: `Ready.\n\`![Final](<${sources.second}>)\``,
+        "no-references": "Ready.",
+      }[selection];
+      if (selection === "delivered") {
+        expect((await sendMedia(bridge, sources.second)).success).toBe(true);
+      }
+      await projector.handleNotification(
+        turnCompleted([
+          { type: "agentMessage", id: "chosen-final", phase: "final_answer", text: finalText },
+        ]),
+      );
+      const result = projector.buildResult({
+        ...bridge.telemetry,
+        toolMediaUrls: selection === "interleaved" ? [siblingUrl, secondSiblingUrl] : [siblingUrl],
+      });
+      const selectsNative = [
+        "revision",
+        "managed",
+        "reverse-order",
+        "mixed",
+        "native-first",
+        "interleaved",
+        "delivered",
+      ].includes(selection);
+      const expectedImages =
+        selection === "delivered"
+          ? []
+          : selection === "reverse-order" || selection === "interleaved"
+            ? [SECOND_PNG_BASE64, tinyPngBase64]
+            : selectsNative
+              ? [SECOND_PNG_BASE64]
+              : [tinyPngBase64, SECOND_PNG_BASE64];
+      expect(result.toolMediaUrls).toContain(siblingUrl);
+      const nativeUrls = result.hostOwnedToolMediaUrls ?? [];
+      expect(
+        await Promise.all(
+          nativeUrls.map(async (url) => (await fs.readFile(url)).toString("base64")),
+        ),
+      ).toEqual(expectedImages);
+      const projectedText = result.assistantTexts.join("\n\n");
+      expect(result.lastAssistant?.content).toEqual([{ type: "text", text: projectedText }]);
+      expect(result.currentAttemptAssistant?.content).toEqual(result.lastAssistant?.content);
+      if (selectsNative) {
+        expect(projectedText).not.toContain(sources.second);
+      } else {
+        expect(projectedText).toBe(finalText);
+      }
+      if (selection === "delivered") {
+        expect(result.messagingToolSourceReplyPayloads).toEqual(
+          bridge.telemetry.messagingToolSourceReplyPayloads,
+        );
+      }
+      const payloads = buildContractReplyPayloads({
+        attempt: result,
+        runParams: {
+          sessionId: params.sessionId,
+          sessionKey: params.sessionKey,
+          runId: params.runId,
+          workspaceDir: params.workspaceDir,
+          prompt: params.prompt,
+          timeoutMs: params.timeoutMs,
+          config: params.config,
+          provider: "openai",
+          model: "gpt-6-astra",
+        },
+      });
+      const deliveredUrls = payloads.flatMap((payload) => payload.mediaUrls ?? []);
+      if (selection === "delivered") {
+        // The existing source-reply transcript mirror retains its sent image;
+        // no unrelated tool image becomes a new fallback attachment.
+        expect(deliveredUrls).toHaveLength(1);
+        expect(deliveredUrls).not.toContain(siblingUrl);
+        expect(payloads.map((payload) => payload.text).join("\n")).not.toContain(revisionUrl);
+        return;
+      }
+      const expectedUrls = selectsNative
+        ? selection === "interleaved"
+          ? [nativeUrls[0], siblingUrl, nativeUrls[1], secondSiblingUrl]
+          : selection === "native-first"
+            ? [...nativeUrls, siblingUrl]
+            : [...(selection === "mixed" ? [siblingUrl] : []), ...nativeUrls]
+        : [siblingUrl, ...nativeUrls];
+      expect(deliveredUrls).toEqual(expectedUrls);
+      if (selection === "mixed") {
+        expect(projectedText).toContain(`![Sibling](${siblingUrl})`);
+      }
+    },
+  );
+
   it("fences direct tool-result callbacks after blocked media when projection closes", async () => {
     const media = createDeferred<Buffer>();
     const readRemoteWorkspaceFile = vi.fn<RemoteWorkspaceFileReader>(() => media.promise);

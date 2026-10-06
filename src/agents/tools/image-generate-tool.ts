@@ -92,7 +92,7 @@ const ImageGenerateToolSchema = Type.Object({
   prompt: Type.Optional(Type.String({ description: "Image prompt." })),
   image: Type.Optional(
     Type.String({
-      description: "Reference image path/URL for edit.",
+      description: "Source image path/URL for edit; use the latest output for a subsequent edit.",
     }),
   ),
   images: Type.Optional(
@@ -109,7 +109,8 @@ const ImageGenerateToolSchema = Type.Object({
   filename: Type.Optional(Type.String({ description: MEDIA_GENERATE_DESCRIPTIONS.filename })),
   size: Type.Optional(
     Type.String({
-      description: "Size hint: 1024x1024, 1536x1024, 1024x1536, 2048x2048, 3840x2160.",
+      description:
+        "Output dimensions supported by the model, e.g. 1024x1024 or 2048x2560; auto where supported.",
     }),
   ),
   aspectRatio: Type.Optional(
@@ -164,7 +165,7 @@ const ImageGenerateToolSchema = Type.Object({
   ),
   count: Type.Optional(
     Type.Integer({
-      description: `Image count 1-${MAX_COUNT}.`,
+      description: `Variations of one prompt, 1-${MAX_COUNT}; use separate calls for distinct assets.`,
       minimum: 1,
       maximum: MAX_COUNT,
     }),
@@ -297,7 +298,7 @@ export function createImageGenerateTool(options?: MediaGenerateToolOptions): Any
     label: "Image Generation",
     name: "image_generate",
     description:
-      'Create/edit images. Batch via count; aspectRatio and resolution up to 4K. Session chat runs in background: call once/request; the result returns as a later turn that sends the media. This turn: short ack at most, then end; no poll/yield. Transparent: outputFormat png|webp + background="transparent"; OpenAI also openai.background, default gpt-image-1.5. action=list providers/models/readiness/auth; status active task.',
+      'Create/edit images. Separate calls for distinct assets or revisions; count gives variations of one prompt. For edits, pass source images; for a subsequent edit, pass the latest output. Session chat runs in background: start all independent requests, then end this turn (short ack at most); completion arrives later with media. Do not resubmit an identical pending generation or poll/yield. Transparent: outputFormat png|webp + background="transparent"; OpenAI also openai.background, default gpt-image-1.5. action=list providers/models/readiness/auth; status active task.',
     parameters: ImageGenerateToolSchema,
     execute: async (_toolCallId, args, signal) => {
       const params = args as Record<string, unknown>;
@@ -331,7 +332,6 @@ export function createImageGenerateTool(options?: MediaGenerateToolOptions): Any
         model,
         options,
         signal,
-        findDuplicate: createImageGenerateDuplicateGuardResult,
         acquire: (config) =>
           acquireMediaGenerationToolProviders("imageGenerationProviders", {
             cfg: config,

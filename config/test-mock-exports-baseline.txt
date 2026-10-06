@@ -1290,8 +1290,6 @@
 ["extensions/ollama/src/wsl2-crash-loop-check.test.ts","openclaw/plugin-sdk/runtime-env","7685c83e0d1168353d999903e773e7cddf261b2cbe1f6aa895501d57b1540185",1]
 ["extensions/onepassword/index.worker.test.ts","./src/op-client.js","4e17d5d5bbbe0a3cb85da6672ca6b5fb8c2d1e2a9c0625c8635122a2fbd4ee24",1]
 ["extensions/onnx/src/artifacts.test.ts","openclaw/plugin-sdk/ssrf-runtime","a46aca887b2bb22c2f8bc6cf593475f3ee49fc558d2df86a21b1acb2319f2422",1]
-["extensions/openai/image-generation-provider.test.ts","openclaw/plugin-sdk/logging-core","53aa37789e32388b20d7fb67ce0e0e2b6de0f7311c5b035d902f72f93a43d701",1]
-["extensions/openai/image-generation-provider.test.ts","openclaw/plugin-sdk/provider-auth-runtime","eb5c37bf125f5fa367efe98a452d35bf05f27f507d2580cdc66ca9fab4f8a891",1]
 ["extensions/openai/index.test.ts","./openai-chatgpt-oauth-flow.runtime.js","a1a58bf0d29aa810af3079f2ae7451d27e23164d39b9fe1cdbed89a9a61c3a39",1]
 ["extensions/openai/memory-embedding-adapter.test.ts","./embedding-batch.js","ac7b8c923a27e86ca959eb01ca820e3c77ab40abeb4f48660a5adc63c6b7694c",1]
 ["extensions/openai/memory-embedding-adapter.test.ts","./embedding-provider.js","3bc754e186dacce015bea77dc262ca37d0cdee8b415157449932c87bdff7467e",1]

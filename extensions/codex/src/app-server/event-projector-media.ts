@@ -6,7 +6,10 @@ import {
 import type { AgentHarnessToolResultTelemetry } from "openclaw/plugin-sdk/agent-harness-tool-runtime";
 import type { RemoteWorkspaceFileReader } from "openclaw/plugin-sdk/file-access-runtime";
 import { generatedImageAssetFromBase64 } from "openclaw/plugin-sdk/image-generation";
-import { resolveGeneratedMediaMaxBytes } from "openclaw/plugin-sdk/media-generation-runtime";
+import {
+  resolveGeneratedMediaMaxBytes,
+  splitMediaFromOutput,
+} from "openclaw/plugin-sdk/media-generation-runtime";
 import { estimateBase64DecodedBytes } from "openclaw/plugin-sdk/media-runtime";
 import {
   normalizeMediaReferenceForComparison,
@@ -204,24 +207,30 @@ export class CodexGeneratedMediaProjection {
     }
   }
 
-  projectDelivery(params: {
-    toolMediaUrls?: string[];
-    messagingToolSentMediaUrls: string[];
-    messagingToolSentTargets: MessagingToolSend[];
-    confirmedMediaDeliveries?: Readonly<
-      AgentHarnessToolResultTelemetry["confirmedMediaDeliveries"]
-    >;
-  }) {
+  projectDelivery(
+    params: {
+      toolMediaUrls?: string[];
+      messagingToolSentMediaUrls: string[];
+      messagingToolSentTargets: MessagingToolSend[];
+      confirmedMediaDeliveries?: Readonly<
+        AgentHarnessToolResultTelemetry["confirmedMediaDeliveries"]
+      >;
+    },
+    assistantTexts: readonly string[] = [],
+  ) {
     const generatedUrls = new Set<string>();
     const generatedUrlBySource = new Map<string, string>();
+    const generatedUrlByReference = new Map<string, string>();
     for (const { mediaUrl, savedPath } of this.mediaByItemId.values()) {
       if (!mediaUrl) {
         continue;
       }
       generatedUrls.add(mediaUrl);
       generatedUrlBySource.set(normalizeMediaReferenceForComparison(mediaUrl), mediaUrl);
+      generatedUrlByReference.set(mediaUrl, mediaUrl);
       if (savedPath) {
         generatedUrlBySource.set(normalizeMediaReferenceForComparison(savedPath), mediaUrl);
+        generatedUrlByReference.set(savedPath, mediaUrl);
       }
     }
     const sentMediaUrls = new Set(params.messagingToolSentMediaUrls);
@@ -245,12 +254,69 @@ export class CodexGeneratedMediaProjection {
         }
       }
     }
+    const selectedGeneratedUrls = new Set<string>();
+    let selectedMediaUrls: Set<string> | undefined;
+    const projectedAssistantTexts = assistantTexts.map((text) => {
+      if (generatedUrlByReference.size === 0) {
+        return text;
+      }
+      const replacements: Array<{ start: number; end: number; text: string }> = [];
+      const selected = splitMediaFromOutput(text, {
+        extractAudioDirectives: false,
+        extractMediaDirectives: false,
+        preserveTrailingWhitespace: true,
+        markdownImageAllowlist: [
+          ...generatedUrlByReference.keys(),
+          ...(params.toolMediaUrls ?? []),
+        ],
+        onMarkdownImage: ({ sourceUrl, start, end }) => {
+          const mediaUrl = generatedUrlByReference.get(sourceUrl);
+          if (!mediaUrl) {
+            return;
+          }
+          const destination = mediaUrl
+            .replaceAll("\\", "\\\\")
+            .replaceAll("<", "\\<")
+            .replaceAll(">", "\\>");
+          replacements.push({ start, end, text: `![](<${destination}>)` });
+        },
+      });
+      if (!selected.mediaUrls?.length) {
+        return text;
+      }
+      selectedMediaUrls ??= new Set<string>();
+      for (const reference of selected.mediaUrls) {
+        const mediaUrl = generatedUrlByReference.get(reference) ?? reference.trim();
+        selectedMediaUrls.add(mediaUrl);
+        if (generatedUrls.has(mediaUrl)) {
+          selectedGeneratedUrls.add(mediaUrl);
+        }
+      }
+      // Native paths belong to Codex's workspace. Rebase only recorded images
+      // so the host's existing selector can also recognize mixed tool media.
+      const pieces: string[] = [];
+      let cursor = 0;
+      for (const replacement of replacements) {
+        pieces.push(text.slice(cursor, replacement.start), replacement.text);
+        cursor = replacement.end;
+      }
+      pieces.push(text.slice(cursor));
+      return pieces.join("");
+    });
+    if (selectedMediaUrls !== undefined) {
+      generatedUrls.clear();
+      for (const mediaUrl of selectedGeneratedUrls) {
+        generatedUrls.add(mediaUrl);
+      }
+    }
     const mediaUrls = new Set(params.toolMediaUrls?.map((url) => url.trim()).filter(Boolean) ?? []);
     for (const mediaUrl of generatedUrls) {
       mediaUrls.add(mediaUrl);
     }
     return {
+      assistantTexts: projectedAssistantTexts,
       toolMediaUrls: mediaUrls.size > 0 ? [...mediaUrls] : params.toolMediaUrls,
+      toolMediaSelectionUrls: selectedMediaUrls ? [...selectedMediaUrls] : undefined,
       hostOwnedToolMediaUrls: generatedUrls.size > 0 ? [...generatedUrls] : undefined,
       messagingToolSentMediaUrls: [...sentMediaUrls],
       messagingToolSentTargets: params.messagingToolSentTargets.map((target) => {

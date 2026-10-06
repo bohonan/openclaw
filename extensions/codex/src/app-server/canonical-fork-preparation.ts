@@ -44,7 +44,10 @@ import {
   fingerprintUserMcpServersConfigPatch,
 } from "./thread-fingerprints.js";
 import { buildDeveloperInstructions } from "./thread-prompt.js";
-import { buildCodexThreadConfiguration } from "./thread-requests.js";
+import {
+  assertCodexImageGenerationPolicy,
+  buildCodexThreadConfiguration,
+} from "./thread-requests.js";
 import { resolveCodexWebSearchPlan } from "./web-search.js";
 
 type Created = Awaited<ReturnType<PluginRuntime["agent"]["session"]["createSessionEntry"]>>;
@@ -218,7 +221,7 @@ export async function prepareCanonicalCodexFork(params: {
     await assertCodexNativeHookRelayAllowed(context.client);
     assertCurrent();
   }
-  await assertCodexModelBackedReviewerEffectiveConfig({
+  const effectiveConfig = await assertCodexModelBackedReviewerEffectiveConfig({
     client: context.client,
     approvalsReviewer: appServer.approvalsReviewer,
     cwd,
@@ -274,6 +277,13 @@ export async function prepareCanonicalCodexFork(params: {
     webSearchAllowed,
     hostSystemAgentActive: false,
   });
+  await assertCodexImageGenerationPolicy({
+    client: context.client,
+    cwd,
+    threadConfig: request.config,
+    effectiveConfig,
+  });
+  assertCurrent();
   return {
     request,
     provisionalAppIds: apps?.provisionalAppIds ?? [],

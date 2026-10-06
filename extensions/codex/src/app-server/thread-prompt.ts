@@ -13,6 +13,7 @@ import {
   isSystemAgentOnlyCodexDynamicToolAllowlist,
   shouldDisableCodexToolSearchForModel,
 } from "./dynamic-tool-profile.js";
+import { buildCodexImageGenerationGuidance } from "./image-generation.js";
 import {
   CODEX_OPENCLAW_DIRECT_DYNAMIC_TOOL_NAMESPACE,
   type CodexDynamicToolSpec,
@@ -48,6 +49,7 @@ export function buildDeveloperInstructions(
   let showWidgetToolName: string | undefined;
   let dashboardToolName: string | undefined;
   let portalToolName: string | undefined;
+  let imageToolName: string | undefined;
   let messageTool: Parameters<typeof buildUiPresentationPrompt>[0]["messageTool"];
   let hasSkillWorkshop = false;
   let hasSessionsSpawn = false;
@@ -81,6 +83,9 @@ export function buildDeveloperInstructions(
       }
       if (name === "portal") {
         portalToolName ??= qualifiedName;
+      }
+      if (name === "image_generate") {
+        imageToolName ??= qualifiedName;
       }
       if (name === "message") {
         messageTool ??= { name: qualifiedName, parameters: tool.inputSchema };
@@ -121,6 +126,9 @@ export function buildDeveloperInstructions(
           .join(", ")}.`
       : undefined,
     deferredToolDiscoveryGuidance,
+    params.disableTools !== true
+      ? buildCodexImageGenerationGuidance(params.config, imageToolName)
+      : undefined,
     hasSkillWorkshop ? buildSkillWorkshopPromptSection().join("\n") : undefined,
     // Codex defers native collab tools behind tool_search on search-capable
     // models (codex-rs spec_plan add_collaboration_tools). Without this hint

@@ -872,6 +872,22 @@ describe("splitMediaFromOutput", () => {
     );
   });
 
+  it("reports accepted image source spans without selecting code or sibling references", () => {
+    const image = "![final](<file:///tmp/native final.png>)";
+    const input = `> Before ${image} ![sibling](https://example.test/sibling.png) after\r\n\`${image}\`\r\n\\${image}`;
+    const accepted: Array<{ sourceUrl: string; source: string }> = [];
+    const result = splitMediaFromOutput(input, {
+      extractAudioDirectives: false,
+      extractMediaDirectives: false,
+      markdownImageAllowlist: ["/tmp/native final.png"],
+      onMarkdownImage: ({ sourceUrl, start, end }) => {
+        accepted.push({ sourceUrl, source: input.slice(start, end) });
+      },
+    });
+    expect(accepted).toEqual([{ sourceUrl: "/tmp/native final.png", source: image }]);
+    expect(result.mediaUrls).toEqual(["/tmp/native final.png"]);
+  });
+
   it("preserves blockquote inline semantics when locating an image", () => {
     const url = "https://example.com/chart.png";
     expectParsedMediaOutputCase(

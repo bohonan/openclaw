@@ -200,6 +200,7 @@ export function defineMediaGenerationDuplicateTests(
         {
           taskId,
           runId: createdTask.runId,
+          requestKey: createdTask.requestKey,
           taskKind: `${kind}_generation`,
           sourceId: `${kind}_generate:google`,
           requesterSessionKey: agentSessionKey,

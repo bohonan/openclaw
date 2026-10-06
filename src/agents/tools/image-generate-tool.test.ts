@@ -55,7 +55,6 @@ let imageOps: typeof import("../../media/media-services.js");
 let splitMediaFromOutput: typeof import("../../media/parse.js").splitMediaFromOutput;
 let mediaStore: typeof import("../../media/store.js");
 let webMedia: typeof import("../../media/web-media.js");
-let resetRecentMediaGenerationDuplicateGuardsForTests: typeof import("../media-generation-task-status-shared.test-support.js").resetRecentMediaGenerationDuplicateGuardsForTests;
 let createImageGenerateTool: typeof import("./image-generate-tool.js").createImageGenerateTool;
 
 function mockGeneratedImage(
@@ -435,8 +434,6 @@ describe("createImageGenerateTool", () => {
     ({ splitMediaFromOutput } = await import("../../media/parse.js"));
     mediaStore = await import("../../media/store.js");
     webMedia = await import("../../media/web-media.js");
-    ({ resetRecentMediaGenerationDuplicateGuardsForTests } =
-      await import("../media-generation-task-status-shared.test-support.js"));
     ({ createImageGenerateTool } = await import("./image-generate-tool.js"));
   });
 
@@ -473,7 +470,6 @@ describe("createImageGenerateTool", () => {
     });
     mediaActivityMocks.listOperations.mockReset();
     mediaActivityMocks.listOperations.mockReturnValue(undefined);
-    resetRecentMediaGenerationDuplicateGuardsForTests();
     resetGeneratedMediaTaskActivityForTests();
   });
 
@@ -972,18 +968,31 @@ describe("createImageGenerateTool", () => {
     ],
   });
 
-  it("does not acquire image providers when the caller aborts a pending duplicate lookup", async () => {
+  it("releases image providers when the caller aborts a pending duplicate lookup", async () => {
+    stubImageGenerationProviders();
+    vi.stubEnv("OPENAI_API_KEY", "openai-test");
     const acquireProviders = vi.mocked(
       mediaGenerationToolProviders.acquireMediaGenerationToolProviders,
     );
+    const release = vi.fn(async () => {});
+    acquireProviders.mockImplementationOnce(async (_key, { cfg }) => ({
+      providers: imageGenerationRuntime.listRuntimeImageGenerationProviders({ config: cfg }),
+      assertOpen() {},
+      run: async (run) => await run(),
+      release,
+    }));
     const taskStatus = await import("../media-generation-task-status.js");
     const lookup =
       createDeferred<
         Awaited<ReturnType<typeof taskStatus.findDuplicateGuardImageGenerationTaskForSession>>
       >();
+    const lookupStarted = createDeferred();
     const findDuplicate = vi
       .spyOn(taskStatus, "findDuplicateGuardImageGenerationTaskForSession")
-      .mockReturnValue(lookup.promise);
+      .mockImplementation(() => {
+        lookupStarted.resolve();
+        return lookup.promise;
+      });
     const generateImage = vi.spyOn(imageGenerationRuntime, "generateImage");
     const scheduleBackgroundWork = vi.fn();
     const agentSessionKey = "agent:main:discord:direct:123";
@@ -1003,17 +1012,19 @@ describe("createImageGenerateTool", () => {
     const abortReason = new Error("image requester cancelled during task lookup");
 
     const pending = tool.execute("call-image-lookup", { prompt: "an image" }, controller.signal);
+    const rejection = expect(pending).rejects.toBe(abortReason);
+    await lookupStarted.promise;
     expect(findDuplicate).toHaveBeenCalledWith(agentSessionKey, {
       prompt: "an image",
-      requestKey: undefined,
+      requestKey: expect.any(String),
       agentId: undefined,
     });
-    expect(acquireProviders).not.toHaveBeenCalled();
+    expect(acquireProviders).toHaveBeenCalledTimes(1);
     controller.abort(abortReason);
     lookup.resolve(undefined);
 
-    await expect(pending).rejects.toBe(abortReason);
-    expect(acquireProviders).not.toHaveBeenCalled();
+    await rejection;
+    expect(release).toHaveBeenCalledTimes(1);
     expect(taskRuntimeMocks.createOperation).not.toHaveBeenCalled();
     expect(scheduleBackgroundWork).not.toHaveBeenCalled();
     expect(generateImage).not.toHaveBeenCalled();
@@ -1181,50 +1192,6 @@ describe("createImageGenerateTool", () => {
     expect(tasks[1]?.progressSummary).toBe("Queued second image");
   });
 
-  it("returns active status for a duplicate image request with the same prompt", async () => {
-    const acquireProviders = vi.mocked(
-      mediaGenerationToolProviders.acquireMediaGenerationToolProviders,
-    );
-    stubImageGenerationProviders();
-    vi.stubEnv("OPENAI_API_KEY", "openai-test");
-    mediaActivityMocks.listOperations.mockReturnValue([
-      {
-        taskId: "task-existing-image",
-        taskKind: "image_generation",
-        sourceId: "image_generate:openai",
-        requesterSessionKey: "agent:main:discord:direct:123",
-        task: "Same diagram prompt",
-        status: "running",
-        createdAt: Date.now(),
-        progressSummary: "Generating image",
-      },
-    ]);
-    const tool = requireImageGenerateTool(
-      createImageGenerateTool({
-        config: configWithDefaults({
-          mediaModels: { image: { primary: "openai/gpt-image-1" } },
-        }),
-        agentDir: "/tmp/agent",
-        agentSessionKey: "agent:main:discord:direct:123",
-      }),
-    );
-
-    const result = await tool.execute("call-duplicate", {
-      prompt: "Same diagram prompt",
-      filename: "same.png",
-      model: "openai/gpt-image-1",
-    });
-
-    expect(taskRuntimeMocks.createOperation).not.toHaveBeenCalled();
-    expect(acquireProviders).not.toHaveBeenCalled();
-    expect(resultText(result)).toContain(
-      "Image generation task task-existing-image is already running",
-    );
-    const details = resultDetails(result);
-    expect(details.duplicateGuard).toBe(true);
-    expect(details.task).toEqual({ taskId: "task-existing-image" });
-  });
-
   it("returns recent status for a repeated image request after fast task completion", async () => {
     stubImageGenerationProviders();
     vi.stubEnv("OPENAI_API_KEY", "openai-test");
@@ -1256,6 +1223,7 @@ describe("createImageGenerateTool", () => {
       {
         taskId: "task-recent-image",
         runId: createdTask.runId,
+        requestKey: createdTask.requestKey,
         taskKind: "image_generation",
         sourceId: "image_generate:openai",
         requesterSessionKey: "agent:main:discord:direct:123",
@@ -1318,6 +1286,7 @@ describe("createImageGenerateTool", () => {
       {
         taskId: "task-first-google-image",
         runId: firstTask.runId,
+        requestKey: firstTask.requestKey,
         taskKind: "image_generation",
         sourceId: "image_generate:google",
         requesterSessionKey: "agent:main:discord:direct:123",

@@ -4,7 +4,6 @@ import type { CapabilityProviderFor } from "../../plugins/capability-provider-ru
 import type { DeliveryContext } from "../../utils/delivery-context.types.js";
 import { captureAgentToolSourceExecutionGuard } from "../agent-tool-source-execution-guard.js";
 import type { AuthProfileStore } from "../auth-profiles/types.js";
-import { recordRecentMediaGenerationTaskStartForSession } from "../media-generation-task-status-shared.js";
 import type { PreparedModelRuntimeSnapshot } from "../prepared-model-runtime.types.js";
 import type { ToolFsPolicy } from "../tool-fs-policy.js";
 import { ToolInputError, readToolStringParam } from "./common.js";
@@ -111,10 +110,6 @@ export async function prepareMediaGenerationTask<
   resolveProviders: (
     resources: Resources,
   ) => Parameters<typeof resolveCapabilityModelConfigForTool>[0]["providers"];
-  findDuplicate: (
-    sessionKey: string | undefined,
-    request: { prompt: string; agentId?: string },
-  ) => Promise<MediaGenerateActionResult | undefined>;
   signal?: AbortSignal;
   prepare: (context: {
     resources: Resources;
@@ -144,20 +139,7 @@ export async function prepareMediaGenerationTask<
           providers: [],
         })
       : null;
-  const readRequest = async () => {
-    const prompt = readToolStringParam(params.args, "prompt", { required: true });
-    return {
-      prompt,
-      duplicate: await params.findDuplicate(options?.agentSessionKey, {
-        prompt,
-        agentId: options?.requesterAgentId,
-      }),
-    };
-  };
-  const configuredRequest = configuredModel ? await readRequest() : undefined;
-  if (configuredRequest?.duplicate) {
-    return configuredRequest.duplicate;
-  }
+  const prompt = readToolStringParam(params.args, "prompt", { required: true });
   signal?.throwIfAborted();
   const resources = await params.acquire(
     configuredModel
@@ -186,10 +168,6 @@ export async function prepareMediaGenerationTask<
       throw new ToolInputError(`No ${generationLabel}-generation model configured.`);
     }
     const effectiveCfg = applyAgentDefaultModelConfig(cfg, generationLabel, modelConfig) ?? cfg;
-    const { prompt, duplicate } = configuredRequest ?? (await readRequest());
-    if (duplicate) {
-      return { kind: "result" as const, result: duplicate };
-    }
     signal?.throwIfAborted();
     resources?.assertOpen();
     return params.prepare({ resources, modelConfig, effectiveCfg, prompt, explicitModelConfig });
@@ -281,6 +259,7 @@ export async function runMediaGenerationTask(params: {
       requesterAgentId: params.requesterAgentId,
       requesterOrigin: params.requesterOrigin,
       prompt: params.prompt,
+      requestKey: params.requestKey,
       providerId: params.providerId,
       assertCurrent: assertAdmissionCurrent,
     });
@@ -292,18 +271,6 @@ export async function runMediaGenerationTask(params: {
     }
 
     if (handle?.detach) {
-      recordRecentMediaGenerationTaskStartForSession({
-        sessionKey: params.sessionKey,
-        agentId: params.requesterAgentId,
-        taskKind: `${generationLabel}_generation`,
-        sourcePrefix: toolName,
-        taskId: handle.taskId,
-        runId: handle.runId,
-        taskLabel: params.prompt,
-        requestKey: params.requestKey,
-        providerId: params.providerId,
-        progressSummary,
-      });
       scheduleMediaGenerationTaskCompletion({
         lifecycle,
         handle,
@@ -331,7 +298,7 @@ export async function runMediaGenerationTask(params: {
           {
             type: "text" as const,
             text: [
-              `Background task started for ${generationLabel} generation (${handle.taskId}). Do not call ${toolName} again for this request. Do not wait, poll, or yield for it: end this turn (a short acknowledgement at most); the completion arrives as a later turn and sends the finished ${generationLabel} here.`,
+              `Background task started for ${generationLabel} generation (${handle.taskId}). Do not resubmit this same pending generation. You may call ${toolName} for other requested assets or revisions. After starting all independent requests, end this turn (a short acknowledgement at most); do not wait, poll, or yield. Each completion arrives as a later turn and sends its finished ${generationLabel} here.`,
               ...(params.messages ?? []),
             ]
               .filter((entry): entry is string => Boolean(entry))
