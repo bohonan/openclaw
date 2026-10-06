@@ -24,7 +24,6 @@ import * as musicGenerationRuntime from "../../music-generation/runtime.js";
 import type { MusicGenerationProvider } from "../../music-generation/types.js";
 import * as fetchTimeout from "../../utils/fetch-timeout.js";
 import { formatAgentInternalEventsForPrompt } from "../internal-events.js";
-import { resetRecentMediaGenerationDuplicateGuardsForTests } from "../media-generation-task-status-shared.test-support.js";
 import * as musicGenerateBackground from "./media-generate-background.js";
 import {
   defineMediaGenerationCancellationTests,
@@ -164,7 +163,6 @@ function resetMusicGenerateMocks() {
   );
   mediaActivityMocks.listOperations.mockReset();
   mediaActivityMocks.listOperations.mockReturnValue(undefined);
-  resetRecentMediaGenerationDuplicateGuardsForTests();
   resetGeneratedMediaTaskActivityForTests();
   vi.mocked(fetchTimeout.buildTimeoutAbortSignal).mockClear();
   taskExecutorMocks.createOperation.mockReset();
@@ -760,7 +758,8 @@ describe("createMusicGenerateTool", () => {
     const text = (result.content?.[0] as { text: string } | undefined)?.text ?? "";
 
     expect(text).toContain("Background task started for music generation (task-123).");
-    expect(text).toContain("Do not call music_generate again for this request.");
+    expect(text).toContain("Do not resubmit this same pending generation.");
+    expect(text).toContain("You may call music_generate for other requested assets or revisions.");
     expect(text).toContain("Timeout normalized: requested 1000ms; used 120000ms.");
     expect(onAsyncTaskStarted).toHaveBeenCalledOnce();
     expect(onAsyncTaskStarted).toHaveBeenCalledWith(

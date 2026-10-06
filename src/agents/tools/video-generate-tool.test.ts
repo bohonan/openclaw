@@ -29,7 +29,6 @@ import { listKnownProviderAuthEnvVarNamesCore } from "../../secrets/provider-env
 import * as videoGenerationRuntime from "../../video-generation/runtime.js";
 import type { AuthProfileStore } from "../auth-profiles/types.js";
 import { formatAgentInternalEventsForPrompt } from "../internal-events.js";
-import { resetRecentMediaGenerationDuplicateGuardsForTests } from "../media-generation-task-status-shared.test-support.js";
 import { VIDEO_GENERATION_TASK_KIND } from "../media-generation-task-status.js";
 import * as videoGenerateBackground from "./media-generate-background.js";
 import {
@@ -194,7 +193,6 @@ function resetVideoGenerateMocks(providerEnvVars: readonly string[]) {
   vi.spyOn(videoGenerationRuntime, "listRuntimeVideoGenerationProviders").mockReturnValue([]);
   mediaActivityMocks.listOperations.mockReset();
   mediaActivityMocks.listOperations.mockReturnValue(undefined);
-  resetRecentMediaGenerationDuplicateGuardsForTests();
   resetGeneratedMediaTaskActivityForTests();
   probeMediaFilesWithinBudgetMock.mockReset();
   probeMediaFilesWithinBudgetMock.mockImplementation(async (inputs: readonly unknown[]) =>
@@ -571,7 +569,8 @@ describe("createVideoGenerateTool", () => {
     const text = (result.content?.[0] as { text: string } | undefined)?.text ?? "";
 
     expect(text).toContain("Background task started for video generation (task-123).");
-    expect(text).toContain("Do not call video_generate again for this request.");
+    expect(text).toContain("Do not resubmit this same pending generation.");
+    expect(text).toContain("You may call video_generate for other requested assets or revisions.");
     expect(onAsyncTaskStarted).toHaveBeenCalledOnce();
     expect(onAsyncTaskStarted).toHaveBeenCalledWith(
       "Video generation started; wait for the generated video completion event.",
@@ -1291,7 +1290,7 @@ describe("createVideoGenerateTool", () => {
     expect(result?.content).toStrictEqual([
       {
         type: "text",
-        text: "Video generation task task-active is already running with openai.\nProgress: Generating video.\nDo not call video_generate again for this request. Do not wait, poll, or yield for it: end this turn; the completion arrives as a later turn and sends the finished video here.",
+        text: "Video generation task task-active is already running with openai.\nProgress: Generating video.\nDo not resubmit this same pending generation. You may call video_generate for other requested assets or revisions. After starting all independent requests, end this turn; do not wait, poll, or yield. Each completion arrives as a later turn and sends its finished video here.",
       },
     ]);
     expect(result?.details).toMatchObject({

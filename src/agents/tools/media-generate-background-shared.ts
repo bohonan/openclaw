@@ -102,6 +102,7 @@ type CreateMediaGenerationTaskRunParams = {
   requesterAgentId?: string;
   requesterOrigin?: DeliveryContext;
   prompt: string;
+  requestKey?: string;
   providerId?: string;
   assertCurrent?: () => void;
 };
@@ -274,6 +275,7 @@ async function createMediaGenerationTaskRun(
       requesterAgentId: params.requesterAgentId,
       runId,
       task: params.prompt,
+      requestKey: params.requestKey,
       startedAt: Date.now(),
       lastEventAt: Date.now(),
       progressSummary: params.queuedProgressSummary,

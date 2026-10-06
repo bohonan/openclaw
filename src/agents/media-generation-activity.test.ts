@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { rotateAgentRunRegistryLifecycleGeneration } from "../infra/agent-run-registry.js";
 import {
   clearGeneratedMediaTaskActivity,
@@ -12,14 +12,104 @@ import {
   updateMediaGenerationOperation,
 } from "./media-generation-activity.js";
 import { resetGeneratedMediaTaskActivityForTests } from "./media-generation-activity.test-support.js";
-import { recordRecentMediaGenerationTaskStartForSession } from "./media-generation-task-status-shared.js";
-import { resetRecentMediaGenerationDuplicateGuardsForTests } from "./media-generation-task-status-shared.test-support.js";
 import { findDuplicateGuardImageGenerationTaskForSession } from "./media-generation-task-status.js";
 afterEach(() => {
   resetGeneratedMediaTaskActivityForTests();
-  resetRecentMediaGenerationDuplicateGuardsForTests();
+  vi.restoreAllMocks();
 });
 describe("native media operation lifetime", () => {
+  it.each(["queued", "running"] as const)(
+    "dedupes only the same request while a long-lived operation is %s",
+    async (status) => {
+      const sessionKey = "agent:main:discord:direct:edits";
+      const operation = createMediaGenerationOperation({
+        taskId: "pending-edit",
+        runId: "pending-edit",
+        taskKind: "image_generation",
+        sourceId: "image_generate:synthetic",
+        requesterSessionKey: sessionKey,
+        task: "Make the background blue",
+        requestKey: "reference-one:1024x1024",
+        status,
+        createdAt: Date.now() - 10 * 60_000,
+      });
+      const request = { prompt: operation.task, requestKey: operation.requestKey };
+      expect(await findDuplicateGuardImageGenerationTaskForSession(sessionKey, request)).toBe(
+        operation,
+      );
+      for (const requestKey of ["reference-two:1024x1024", "reference-one:2048x2048"]) {
+        expect(
+          await findDuplicateGuardImageGenerationTaskForSession(sessionKey, {
+            ...request,
+            requestKey,
+          }),
+        ).toBeUndefined();
+      }
+    },
+  );
+
+  it.each([
+    ["succeeded", undefined, 120_000, true],
+    ["succeeded", undefined, 120_001, false],
+    ["succeeded", "blocked", 1_000, false],
+    ["failed", undefined, 1_000, false],
+  ] as const)(
+    "guards a %s completion (%s, aged %s ms): %s",
+    async (status, terminalOutcome, ageMs, blocksDuplicate) => {
+      const now = Date.now();
+      vi.spyOn(Date, "now").mockReturnValue(now);
+      const sessionKey = "agent:main:discord:direct:completed";
+      const operation = createMediaGenerationOperation({
+        taskId: "completed-edit",
+        runId: "completed-edit",
+        taskKind: "image_generation",
+        sourceId: "image_generate:synthetic",
+        requesterSessionKey: sessionKey,
+        task: "Make the background blue",
+        requestKey: "same-edit",
+        status,
+        terminalOutcome,
+        createdAt: now - 10 * 60_000,
+        endedAt: now - ageMs,
+      });
+      const siblingRunId = "other-completed-edit";
+      const sibling = createMediaGenerationOperation({
+        taskId: "other-completed-edit",
+        runId: siblingRunId,
+        taskKind: "image_generation",
+        sourceId: "image_generate:synthetic",
+        requesterSessionKey: sessionKey,
+        task: "Make the background green",
+        requestKey: "other-edit",
+        status: "running",
+        createdAt: now - 2_000,
+      });
+      updateMediaGenerationOperation(siblingRunId, {
+        status: "succeeded",
+        endedAt: now - 1_000,
+      });
+      clearGeneratedMediaTaskActivity(siblingRunId);
+      expect(
+        await findDuplicateGuardImageGenerationTaskForSession(sessionKey, {
+          prompt: operation.task,
+          requestKey: "same-edit",
+        }),
+      ).toBe(blocksDuplicate ? operation : undefined);
+      expect(
+        await findDuplicateGuardImageGenerationTaskForSession(sessionKey, {
+          prompt: operation.task,
+          requestKey: "revised-edit",
+        }),
+      ).toBeUndefined();
+      expect(
+        await findDuplicateGuardImageGenerationTaskForSession(sessionKey, {
+          prompt: sibling.task,
+          requestKey: "other-edit",
+        }),
+      ).toBe(sibling);
+    },
+  );
+
   it("keeps shared bare session keys agent-scoped and retires stale process ownership", async () => {
     const before = getGeneratedMediaTaskIdsForSessionKey("shared", "one");
     for (const agent of ["one", "two"]) {
@@ -31,6 +121,7 @@ describe("native media operation lifetime", () => {
         taskKind: "image_generation",
         sourceId: "image_generate:synthetic",
         task: "a synthetic lighthouse",
+        requestKey: "same-request",
         status: "running",
         createdAt: Date.now(),
       });
@@ -46,17 +137,6 @@ describe("native media operation lifetime", () => {
     expect(hasNewGeneratedMediaTaskForSessionKey("shared", oneAdmissions, "one")).toBe(false);
     expect(hasNewGeneratedMediaTaskForSessionKey("shared", oneAdmissions, "two")).toBe(true);
     expect(getActiveMediaGenerationRunCount()).toBe(2);
-    recordRecentMediaGenerationTaskStartForSession({
-      sessionKey: "shared",
-      agentId: "one",
-      taskKind: "image_generation",
-      sourcePrefix: "image_generate",
-      taskId: "one",
-      runId: "one",
-      taskLabel: "a synthetic lighthouse",
-      requestKey: "same-request",
-      progressSummary: "generating",
-    });
     expect(
       await findDuplicateGuardImageGenerationTaskForSession("shared", {
         agentId: "one",
@@ -87,19 +167,9 @@ describe("native media operation lifetime", () => {
       requesterSessionKey: sessionKey,
       requesterAgentId: "main",
       task: "draw a tree",
+      requestKey: "same-request",
       status: "running",
       createdAt: Date.now(),
-    });
-    recordRecentMediaGenerationTaskStartForSession({
-      sessionKey,
-      agentId: "main",
-      taskKind: "image_generation",
-      sourcePrefix: "image_generate",
-      taskId: operation.taskId,
-      runId: operation.runId,
-      taskLabel: "draw a tree",
-      requestKey: "same-request",
-      progressSummary: "generating",
     });
     expect(
       await findDuplicateGuardImageGenerationTaskForSession(sessionKey, {

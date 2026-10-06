@@ -22,7 +22,6 @@ import {
   resetGeneratedMediaTaskActivityForTests,
   admitMediaHandle,
 } from "../media-generation-activity.test-support.js";
-import { resetRecentMediaGenerationDuplicateGuardsForTests } from "../media-generation-task-status-shared.test-support.js";
 import { prepareConfiguredRuntimeFacts } from "../prepared-model-runtime.configured-catalog.js";
 import { prepareWorkspaceBuildGroup } from "../prepared-model-runtime.facts.js";
 import { createPreparedModelRuntimeSnapshot } from "../prepared-model-runtime.full-catalog.js";
@@ -46,7 +45,6 @@ const png = Buffer.from(
 
 afterEach(() => {
   vi.restoreAllMocks();
-  resetRecentMediaGenerationDuplicateGuardsForTests();
   resetGeneratedMediaTaskActivityForTests();
   clearPluginMetadataLifecycleCaches();
   resetPluginRuntimeStateForTest();
