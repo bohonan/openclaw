@@ -47,7 +47,7 @@ import {
   CodexIncognitoPolicyChangeError,
   refreshCodexThreadInstructions,
 } from "./thread-policy.js";
-import { buildThreadResumeParams } from "./thread-requests.js";
+import { buildCodexRuntimeThreadConfigForRun, buildThreadResumeParams } from "./thread-requests.js";
 
 type CodexWarmThreadReuseParams = CodexThreadRequestContext & {
   params: CodexStartOrResumeThreadParams;
@@ -206,6 +206,14 @@ export async function tryReuseCodexLiveThread(
   // configuration ownership. Keep their existing live-only continuation path.
   if (incognito && (binding.preserveNativeModel || binding.connectionScope === "supervision")) {
     if (
+      buildCodexRuntimeThreadConfigForRun(params.params, params.config, params)[
+        "features.image_generation"
+      ] === false
+    ) {
+      // This native-owned lifetime has no OpenClaw creation policy to attest or reload.
+      throw new CodexIncognitoPolicyChangeError();
+    }
+    if (
       binding.clientId === clientId &&
       binding.clientId &&
       ((await options.buildLoadedPluginThreadConfig(binding))?.fingerprint ??
@@ -359,6 +367,8 @@ export async function tryReuseCodexLiveThread(
       incognito &&
       (!ephemeralPolicy ||
         ephemeralPolicy.developerInstructions !== params.developerInstructions ||
+        Boolean(ephemeralPolicy.nativeImageGenerationDisabled) !==
+          (resumeParams.config?.["features.image_generation"] === false) ||
         getCodexInferenceThread(params.client, binding.threadId) !== params.inferenceRoute ||
         [...(params.inferenceProviderRoutes?.keys() ?? [])].some(
           (provider) =>

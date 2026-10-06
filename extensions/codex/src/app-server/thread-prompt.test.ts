@@ -6,6 +6,7 @@ import {
   type CodexDynamicToolFunctionSpec,
   type CodexDynamicToolSpec,
 } from "./protocol.js";
+import { createThreadRequestAttemptParams as createAttemptParams } from "./thread-lifecycle.test-fixtures.js";
 import { buildDeveloperInstructions } from "./thread-prompt.js";
 
 const delegationTools: CodexDynamicToolSpec[] = [
@@ -84,6 +85,108 @@ describe("buildDeveloperInstructions Git co-authors", () => {
 
   it("omits the section when there is nobody to credit", () => {
     expect(buildInstructions()).not.toContain("Git co-authors:");
+  });
+});
+
+describe("image workflow guidance", () => {
+  it("materializes the openclaw_direct prompt inventory once with matching guidance", () => {
+    const params = createAttemptParams({ provider: "openai" });
+    params.sourceReplyDeliveryMode = "message_tool_only";
+    let namespaceReads = 0;
+    const yieldTool: CodexDynamicToolFunctionSpec = {
+      type: "function",
+      name: "sessions_yield",
+      description: "End the current turn",
+      inputSchema: { type: "object" },
+    };
+    const tools = [
+      yieldTool,
+      ...[
+        "zeta_tool",
+        "message",
+        "skill_workshop",
+        "alpha_tool",
+        "sessions_spawn",
+        "image_generate",
+      ].map((name): CodexDynamicToolFunctionSpec => ({
+        type: "function",
+        name,
+        description: name,
+        inputSchema: { type: "object" },
+        deferLoading: ["zeta_tool", "skill_workshop", "alpha_tool"].includes(name),
+      })),
+    ];
+    const instructions = buildDeveloperInstructions(params, {
+      dynamicTools: [
+        yieldTool,
+        {
+          type: "namespace",
+          name: "openclaw_direct",
+          description: "",
+          get tools() {
+            namespaceReads += 1;
+            return tools;
+          },
+        },
+      ],
+    });
+    expect(namespaceReads).toBe(1);
+    expect(instructions).toContain(
+      "Use `openclaw_direct.image_generate` for an explicitly requested provider/model",
+    );
+    expect(instructions.includes("`openclaw_direct.sessions_yield`")).toBe(true);
+    expect(instructions.includes("native `wait_agent`")).toBe(true);
+    expect(instructions).toContain(
+      "Deferred searchable OpenClaw dynamic tools available: alpha_tool, skill_workshop, zeta_tool.",
+    );
+    expect(instructions).toContain("## Skill Workshop");
+    expect(instructions).toContain("Use Codex native `spawn_agent` for Codex subagents");
+    expect(instructions).toContain("Use `tool_search` to find a tool that is not listed");
+    expect(instructions).toContain(
+      "Never use `exec` to look up a tool that is already listed, and do not re-run a completed call to get a result you already have.",
+    );
+    expect(instructions).not.toContain("On code-mode-only models");
+    expect(instructions).toContain(
+      "Use OpenClaw `sessions_spawn` only for OpenClaw or ACP delegation, never as a substitute for `spawn_agent` on internal legwork.",
+    );
+  });
+
+  const imageTool: CodexDynamicToolSpec = {
+    type: "namespace",
+    name: "openclaw",
+    tools: [{ type: "function", name: "image_generate", description: "Images", inputSchema: {} }],
+    description: "OpenClaw tools",
+  };
+
+  it.each([undefined, "google/test-image-model"])(
+    "follows the image route while preserving explicit overrides: %s",
+    (image) => {
+      const instructions = buildDeveloperInstructions(
+        createParams({ config: { agents: { defaults: { mediaModels: { image } } } } }),
+        { dynamicTools: [imageTool] },
+      );
+      expect(instructions).toContain("`openclaw.image_generate`");
+      expect(instructions).toContain("actual source images");
+      expect(instructions).toContain("selected final images");
+      if (image) {
+        expect(instructions).toContain("configured image provider");
+        expect(instructions).not.toContain("use Codex's native `image_gen.imagegen`");
+      } else {
+        expect(instructions).toContain(
+          "use Codex's native `image_gen.imagegen` when it is available",
+        );
+        expect(instructions).toContain("Never silently substitute native generation");
+      }
+    },
+  );
+
+  it("omits image routing guidance when the image tool is unavailable or tools are disabled", () => {
+    for (const [params, dynamicTools] of [
+      [createParams(), []],
+      [createParams({ disableTools: true }), [imageTool]],
+    ] as const) {
+      expect(buildDeveloperInstructions(params, { dynamicTools })).not.toContain("image_gen");
+    }
   });
 });
 

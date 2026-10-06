@@ -15,6 +15,10 @@ import {
   isSystemAgentOnlyCodexDynamicToolAllowlist,
   shouldDisableCodexToolSearchForModel,
 } from "./dynamic-tool-profile.js";
+import {
+  assertCodexImageGenerationEffectiveConfig,
+  resolveCodexImageGenerationPlan,
+} from "./image-generation.js";
 import { mergeCodexThreadConfigs } from "./plugin-thread-config.js";
 import { buildCodexProjectDocThreadConfig } from "./project-doc-thread-config.js";
 import {
@@ -399,7 +403,18 @@ export function buildCodexRuntimeThreadConfigForRun(
     webSearchAllowed: options.webSearchAllowed,
   }).threadConfig;
   const baseConfig = buildCodexRuntimeThreadConfig(
-    mergeCodexThreadConfigs(config, webSearchConfig),
+    mergeCodexThreadConfigs(
+      config,
+      webSearchConfig,
+      resolveCodexImageGenerationPlan({
+        config: params.config,
+        disableTools: params.disableTools,
+        nativeToolSurfaceEnabled: options.nativeCodeModeEnabled,
+        imageGenerationAllowed:
+          !isCodexResponsesOAuthRun(params) &&
+          !params.pluginHarnessToolPolicySafeDeniedTools?.includes("image_generate"),
+      }).threadConfig,
+    ),
     options,
   );
   const runtimeConfig =
@@ -413,16 +428,12 @@ export function buildCodexRuntimeThreadConfigForRun(
         ? {
             "features.apps": false,
             "features.plugins": false,
-            "features.image_generation": false,
             "features.memories": false,
             "features.skill_search": false,
             "orchestrator.skills.enabled": false,
             "orchestrator.mcp.enabled": false,
             "skills.bundled.enabled": false,
           }
-        : undefined,
-      params.pluginHarnessToolPolicySafeDeniedTools?.includes("image_generate")
-        ? { "features.image_generation": false }
         : undefined,
       shouldDisableCodexToolSearchForModel(params.modelId)
         ? { "features.multi_agent": false }
@@ -637,6 +648,28 @@ export async function readCodexManagedRequirementsFingerprint(
 ): Promise<string> {
   return buildCodexManagedRequirementsFingerprint(
     await readCodexManagedRequirements(client, signal),
+  );
+}
+
+/** Fork entry points share the same native-image conflict checks as ordinary turns. */
+export async function assertCodexImageGenerationPolicy(params: {
+  client: CodexAppServerClient;
+  cwd: string;
+  threadConfig: JsonObject;
+  effectiveConfig?: CodexConfigReadResponse;
+  signal?: AbortSignal;
+}): Promise<void> {
+  if (params.threadConfig["features.image_generation"] !== false) {
+    return;
+  }
+  await assertCodexManagedRequirementsDoNotOverrideToolPolicy(
+    params.client,
+    { restrictedToolSurface: false, additionalDeniedFeatures: ["image_generation"] },
+    params.signal,
+  );
+  assertCodexImageGenerationEffectiveConfig(
+    params.effectiveConfig ??
+      (await readCodexEffectiveConfig(params.client, params.cwd, { signal: params.signal })),
   );
 }
 

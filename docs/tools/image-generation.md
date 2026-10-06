@@ -253,6 +253,13 @@ translation.
 
 ### Provider selection order
 
+With the Codex harness, an explicit image primary, fallback list, or timeout
+also disables Codex's separate native image-generation tool, so it cannot bypass
+this configuration. Without those settings, eligible Codex sessions prefer
+native generation for requests without an explicit provider/model; the managed
+tool remains available for explicit overrides and supported API parameters.
+See [Codex image routing](/plugins/codex-harness/runtime-behavior#image-generation-routing).
+
 For `image_generate`, OpenClaw tries providers in this order:
 
 1. **`model` parameter** from the tool call. When set, only this model is tried.

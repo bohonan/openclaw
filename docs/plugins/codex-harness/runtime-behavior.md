@@ -131,6 +131,42 @@ server. These connections keep their existing restricted completion behavior
 and reject managed hooks when their isolation cannot be verified. Managed
 requirements that force a conflicting tool capability still reject the completion.
 
+## Image generation routing
+
+OpenClaw's image configuration controls which image-generation route Codex can
+use. Setting a primary model, a nonempty fallback list, or a timeout under
+`agents.defaults.mediaModels.image` disables Codex's native image-generation
+tool. The agent uses OpenClaw's `image_generate` tool with that configuration.
+This applies to every configured provider, including OpenAI: Codex's native
+image tool cannot select an arbitrary configured image model or apply the
+managed tool's timeout and API parameters.
+
+Without an explicit image configuration, Codex retains its own native feature,
+model, provider, and account eligibility. When the native image tool is
+available, the agent prefers it for generation and edits without an explicit
+provider/model request. OpenClaw's managed image tool remains available for
+explicit model or API-parameter requests and when native generation is
+unavailable. Its existing authentication, exact per-call model overrides, and
+fallback rules still apply. See [Image generation](/tools/image-generation).
+
+To use native defaults, remove the image-specific primary, fallbacks, and
+timeout rather than pinning an OpenAI image model. This does not change the
+reasoning model or the Codex account. Native generation still follows Codex's
+own authentication and supported tool schema; prompt wording does not add
+unsupported API parameters.
+
+The same selection applies to new threads, resumed threads, and side or
+canonical forks. Ordinary warm threads reload their native configuration when
+the route changes. Incognito conversations cannot reload native tool policy
+without losing their history, so a route change requires a fresh conversation.
+If administrator-managed native requirements prevent disabling image generation,
+OpenClaw reports the conflict before starting the turn.
+
+Image workflow instructions should follow the available route: preserve the
+full brief and references, pass the actual source image for edits, and use the
+latest output when refining it. A workspace instruction to always use native
+Codex images would conflict with a configured image provider and should be removed.
+
 ## Image loader ownership
 
 For image-capable models with Codex native tools enabled, Codex owns
