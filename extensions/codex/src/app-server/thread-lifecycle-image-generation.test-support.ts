@@ -1,5 +1,5 @@
 import path from "node:path";
-import { expect, it, vi } from "vitest";
+import { expect, it } from "vitest";
 import { tempDir } from "./run-attempt-test-harness.js";
 import {
   createLeasedCodexLifecycleHarness,
@@ -107,19 +107,22 @@ export function registerThreadImageGenerationTests({
           agents: { defaults: { mediaModels: { image: "google/test-image-model" } } },
         };
       }
-      const request = vi.fn(async (method: string) => {
-        if (method === "config/read") {
-          return { config: {}, layers: [] };
-        }
-        if (method === "configRequirements/read") {
-          return { requirements: { featureRequirements: { [feature]: true } } };
-        }
-        throw new Error(`unexpected method: ${method}`);
+      const { client, request } = await createLeasedCodexLifecycleHarness({
+        agentDir: path.join(tempDir, "agent"),
+        respond: async (method: string) => {
+          if (method === "config/read") {
+            return { config: {}, layers: [] };
+          }
+          if (method === "configRequirements/read") {
+            return { requirements: { featureRequirements: { [feature]: true } } };
+          }
+          throw new Error(`unexpected method: ${method}`);
+        },
       });
 
       await expect(
         startOrResumeThread({
-          client: { request } as never,
+          client,
           params,
           userMcpServersEnabled: false,
         }),

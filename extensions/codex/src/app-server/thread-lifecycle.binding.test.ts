@@ -2928,10 +2928,10 @@ describe("Codex app-server thread lifecycle bindings", () => {
       ...PREFLIGHT_METHODS,
       "thread/start",
       "thread/unsubscribe",
-      "config/read",
+      ...PREFLIGHT_METHODS,
       "thread/start",
       "thread/unsubscribe",
-      "config/read",
+      ...PREFLIGHT_METHODS,
       "thread/read",
       "thread/resume",
       "thread/inject_items",
@@ -3198,7 +3198,7 @@ describe("Codex app-server thread lifecycle bindings", () => {
     expect(buildDenyAllPluginThreadConfig).toHaveBeenCalledTimes(1);
     const requestCalls = request.mock.calls;
     expect(requestCalls.map(([method]) => method)).toEqual([
-      "config/read",
+      ...PREFLIGHT_METHODS,
       "thread/start",
       "thread/unsubscribe",
       ...PREFLIGHT_METHODS,
